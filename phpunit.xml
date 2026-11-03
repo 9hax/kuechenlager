@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache">
+	<testsuites>
+		<testsuite name="Lager app">
+			<directory>tests/php</directory>
+		</testsuite>
+	</testsuites>
+	<source>
+		<include>
+			<directory>lib</directory>
+		</include>
+	</source>
+	<coverage pathCoverage="true" includeUncoveredFiles="true"/>
+</phpunit>
