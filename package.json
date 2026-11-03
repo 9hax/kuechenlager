@@ -8,7 +8,7 @@
   "scripts": {
     "test": "node --test",
     "test:php": "vendor/bin/phpunit",
-    "test:coverage": "node --experimental-test-coverage --test-coverage-include=js/lager.js --test-coverage-include-all --test tests/js/lager.test.cjs"
+    "test:coverage": "node --experimental-test-coverage --test-coverage-include=js/lager.js --test tests/js/lager.test.cjs"
   },
   "devDependencies": {
     "jsdom": "^30.1.3"
