@@ -1,0 +1,16 @@
+{
+  "name": "kuechenlager-tests",
+  "private": true,
+  "description": "Test runner for the Nextcloud Lager app frontend",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:php": "vendor/bin/phpunit",
+    "test:coverage": "node --experimental-test-coverage --test-coverage-include=js/lager.js --test tests/js/lager.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
+  }
+}

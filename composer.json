@@ -1,0 +1,29 @@
+{
+  "name": "9hax/kuechenlager",
+  "description": "Test dependencies for the Nextcloud Lager app",
+  "type": "project",
+  "license": "AGPL-3.0-or-later",
+  "require-dev": {
+    "doctrine/dbal": "^3.8",
+    "nextcloud/ocp": "36.0.0.x-dev",
+    "phpunit/phpunit": "~10.5"
+  },
+  "autoload": {
+    "psr-4": {
+      "OCA\\Lager\\": "lib/",
+      "OCP\\": "vendor/nextcloud/ocp/OCP/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "OCA\\Lager\\Tests\\": "tests/php/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit",
+    "test:coverage": "phpunit --coverage-text --path-coverage"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}
