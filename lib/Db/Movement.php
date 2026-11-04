@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Db;
+namespace OCA\Kuechenlager\Db;
 
 use JsonSerializable;
 use OCP\AppFramework\Db\Entity;

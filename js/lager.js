@@ -5,12 +5,12 @@
 (function () {
 	'use strict';
 
-	const API = '/index.php/apps/lager/api';
+	const API = '/index.php/apps/kuechenlager/api';
 
 	let token = '';
-	let isAdmin = false;
 	let searchTimer = null;
-	let expanded = new Set();
+	let selectedCabinet = null;
+	let selectedSlot = null;
 
 	// html5-qrcode v2.3.8 (lokales Bundle, kein CDN)
 	// scanner: Live-Kamera-Scanning (eigene UI mit Kamerawahl)
@@ -21,14 +21,25 @@
 	// Eingebettete deutsche Uebersetzungen (Fallback, falls die gecachte
 	// l10n/de.js-Datei im Browser aelter als dieses JS ist).
 	const DE_I18N = {
-		"Warehouse": "Lagerverwaltung",
+		"Kitchen inventory": "Küchenlager",
+		"Name": "Name",
 		"Scan barcode/QR": "Barcode/QR scannen",
 		"Scan": "Scannen",
 		"Search article or EAN …": "Artikel oder EAN suchen …",
 		"History": "Historie",
 		"+ Location": "+ Lagerort",
-		"No locations created yet.": "Noch keine Lagerorte angelegt.",
-		"No slot selected.": "Kein Fach ausgewählt.",
+		"Create a location first.": "Lege zuerst einen Lagerort an.",
+		"Select a location.": "Wähle einen Lagerort.",
+		"Select a cabinet.": "Wähle ein Regal.",
+		"Create a cabinet first.": "Lege zuerst ein Regal an.",
+		"Select a slot.": "Wähle ein Fach.",
+		"Create a slot first.": "Lege zuerst ein Fach an.",
+		"Hide locations": "Lagerorte ausblenden",
+		"Show locations": "Lagerorte anzeigen",
+		"Storage place": "Lagerort",
+		"No articles here.": "Hier sind keine Artikel.",
+		"No items below minimum stock.": "Keine Artikel unter Mindestbestand.",
+		"Select a cabinet or slot.": "Wähle ein Regal oder Fach.",
 		"Scan barcode / QR": "Barcode / QR scannen",
 		"Starting camera …": "Kamera wird gestartet …",
 		"Or load a photo:": "Oder Foto laden:",
@@ -41,10 +52,27 @@
 		"Tip: hold the code about 20–40 cm in front of the camera.": "Tipp: Code ruhig ca. 20–40 cm vor die Kamera halten.",
 		"Close": "Schließen",
 		"Show code": "Code anzeigen",
-		"Support the app with a donation": "Die App mit einer Spende unterstützen",
-		"Donate": "Spenden",
+		"Based on": "Basiert auf",
+		"Donate to the original project here.": "Hier kannst du das ursprüngliche Projekt unterstützen.",
 		"Create location": "Lagerort anlegen",
 		"Description": "Beschreibung",
+		"EAN": "EAN",
+		"EAN / Code": "EAN / Code",
+		"EAN:": "EAN:",
+		"Manufacturer": "Hersteller",
+		"Notes": "Notizen",
+		"Tags": "Tags",
+		"Tag": "Tag",
+		"Manage tags": "Tags verwalten",
+		"Shopping list": "Einkaufsliste",
+		"To buy": "Einzukaufen",
+		"Add tag": "Tag hinzufügen",
+		"e.g. Vegan": "z. B. Vegan",
+		"No tags created yet.": "Noch keine Tags angelegt.",
+		"A tag with this name already exists.": "Ein Tag mit diesem Namen existiert bereits.",
+		"Tag name is invalid.": "Der Tag-Name ist ungültig.",
+		"No more than 20 tags can be assigned to an article.": "Einem Artikel können höchstens 20 Tags zugeordnet werden.",
+		"Manufacturer is too long.": "Der Herstellername ist zu lang.",
 		"e.g. Cellar": "z. B. Keller",
 		"Create cabinet": "Regal anlegen",
 		"Create slot": "Fach anlegen",
@@ -61,12 +89,17 @@
 		"Rename: {name}": "Umbenennen: {name}",
 		"New name": "Neuer Name",
 		"+ Add article": "+ Artikel anlegen",
-		"Create article in {slot}": "Artikel anlegen in {slot}",
+		"Create article in {container}": "Artikel anlegen in {container}",
 		"Article": "Artikel",
 		"e.g. Screwdriver 6 mm": "z. B. Schraubendreher 6 mm",
-		"e.g. 4001234567890 (optional)": "z. B. 4001234567890 (optional)",
+		"e.g. 4001234567890": "z. B. 4001234567890",
 		"Initial stock": "Anfangsbestand",
-		"No articles in this slot.": "Keine Artikel in diesem Fach.",
+		"Minimum stock": "Mindestbestand",
+		"Low-stock webhook URL": "Webhook-URL für niedrige Bestände",
+		"Send an HTTPS JSON webhook when an item drops below its minimum quantity. Leave blank to disable.": "Sendet einen HTTPS-JSON-Webhook, wenn ein Artikel unter seinen Mindestbestand fällt. Leer lassen, um die Funktion zu deaktivieren.",
+		"Could not save webhook settings.": "Webhook-Einstellungen konnten nicht gespeichert werden.",
+		"Webhook URL must be a valid HTTPS URL.": "Die Webhook-URL muss eine gültige HTTPS-Adresse sein.",
+		"Low stock: %s (%d/%d)": "Niedriger Bestand: %s (%d/%d)",
 		"Quantity": "Menge",
 		"Show QR/code": "QR/Code anzeigen",
 		"Book stock in": "Eingang buchen",
@@ -116,6 +149,7 @@
 		"Deleted.": "Gelöscht.",
 		"Error (HTTP {status})": "Fehler (HTTP {status})",
 		"A location with this name already exists.": "Ein Lagerort mit diesem Namen existiert bereits.",
+		"This article is already in this location.": "Dieser Artikel ist an diesem Lagerort bereits vorhanden.",
 		"This article is already in the slot.": "Dieser Artikel liegt im Fach bereits vor.",
 		"Stock can only be deleted with a quantity of 0.": "Bestand kann nur mit Menge 0 gelöscht werden.",
 		"Movement type must be \"in\" or \"out\".": "Bewegungstyp muss \"in\" oder \"out\" sein.",
@@ -138,11 +172,11 @@
 		"Camera not supported in this browser. Use file selection instead.": "Kamera wird von diesem Browser nicht unterstützt. Bitte Datei auswählen verwenden.",
 	};
 	// i18n: Quellstrings sind Englisch. Uebersetzungen (z. B. Deutsch) kommen
-	// ueber /apps/lager/l10n/{lang}.js aus l10n/{lang}.json (window.t).
+	// ueber /apps/kuechenlager/l10n/{lang}.js aus l10n/{lang}.json (window.t).
 	function T(text, vars) {
 		let out = text;
 		try {
-			if (typeof window.t === 'function') { out = window.t('lager', text, vars); }
+			if (typeof window.t === 'function') { out = window.t('kuechenlager', text, vars); }
 		} catch (e) { /* ignore */ }
 		if (out === text) {
 			// Fallback: eingebettetes deutsches Woerterbuch, falls die
@@ -171,22 +205,32 @@
 				token = meta.getAttribute('content') || '';
 			}
 		}
-		const appContent = document.getElementById('app-content');
-		isAdmin = appContent && appContent.dataset.isAdmin === '1';
 		bind();
 		loadTree();
 	}
 
 	function bind() {
+		document.getElementById('lager-add-article-btn').addEventListener('click', function () {
+			if (selectedSlot) { openCreateArticleForm(selectedSlot, 'slot'); }
+			else if (selectedCabinet) { openCreateArticleForm(selectedCabinet, 'cabinet'); }
+		});
+		updateAddArticleState(T('Create a location first.'));
+
 		document.getElementById('lager-add-location-btn').addEventListener('click', function () {
 			openFormModal({
 				title: T('Create location'),
 				fields: [
-					{ name: 'name', label: 'Name', required: true, placeholder: T('e.g. Cellar') },
-					{ name: 'description', label: T('Description'), placeholder: 'optional' },
+					{ name: 'name', label: T('Name'), required: true, placeholder: T('e.g. Cellar') },
+					{ name: 'description', label: T('Description') },
 				],
+				file: { label: T('Photo') },
 				onSubmit: function (values) {
-					return api('POST', '/location', values).then(function () {
+					return api('POST', '/location', {
+						name: values.name,
+						description: values.description,
+					}).then(function (location) {
+						return uploadLocationImage(location.id, values._image);
+					}).then(function () {
 						return loadTree();
 					});
 				},
@@ -202,6 +246,9 @@
 		});
 
 		document.getElementById('lager-history-btn').addEventListener('click', openHistoryModal);
+		document.getElementById('lager-tags-btn').addEventListener('click', openTagManager);
+		document.getElementById('lager-shopping-list-btn').addEventListener('click', openShoppingListModal);
+		setupLocationSidebar();
 		document.getElementById('lager-scan-btn').addEventListener('click', openScanModal);
 		document.getElementById('lager-scan-close').addEventListener('click', closeScanModal);
 		document.getElementById('lager-qr-close').addEventListener('click', function () {
@@ -275,6 +322,17 @@
 		fd.append('file', file);
 		return apiUpload('/stock/' + itemId + '/image', fd).catch(function (e) {
 			toast(e.message, true);
+			throw e;
+		});
+	}
+
+	function uploadLocationImage(locationId, file) {
+		if (!file || !locationId) { return Promise.resolve(); }
+		const fd = new FormData();
+		fd.append('file', file);
+		return apiUpload('/location/' + locationId + '/image', fd).catch(function (e) {
+			toast(e.message, true);
+			throw e;
 		});
 	}
 
@@ -296,50 +354,57 @@
 		const empty = document.getElementById('lager-tree-empty');
 		tree.innerHTML = '';
 		empty.classList.toggle('hidden', locations.length > 0);
-		locations.forEach(function (loc) { tree.appendChild(buildBranch('location', loc, null)); });
+		locations.forEach(function (loc) { tree.appendChild(buildBranch('location', loc)); });
+		if (!selectedSlot) {
+			updateAddArticleState(locations.length ? T('Select a location.') : T('Create a location first.'));
+		}
 	}
 
-	function keyFor(parentKey, type, node) {
-		return parentKey ? parentKey + '/' + type + ':' + node.id : type + ':' + node.id;
-	}
-
-	function buildBranch(type, node, parentKey) {
-		const key = keyFor(parentKey, type, node);
-		node._key = key;
+	function buildBranch(type, node) {
 		const li = document.createElement('li');
 		const row = el('div', 'tree-row');
+		if (type === 'location') { row.dataset.locationId = String(node.id); }
+		if (type === 'cabinet') { row.dataset.cabinetId = String(node.id); }
 		if (type === 'slot') { row.dataset.slotId = String(node.id); }
-		const caret = el('span', 'caret');
-		const hasKids = (node.cabinets && node.cabinets.length > 0) || (node.slots && node.slots.length > 0);
-		caret.textContent = hasKids ? '\u25B6' : '';
+		if (type === 'location' && node.has_image) {
+			const image = document.createElement('img');
+			image.className = 'location-thumb';
+			image.src = API + '/location/' + node.id + '/image?v=' + Date.now();
+			image.alt = '';
+			image.title = T('Show photo');
+			image.addEventListener('error', function () { image.remove(); });
+			image.addEventListener('click', function (event) {
+				event.stopPropagation();
+				const overlay = openModal({ title: node.name });
+				const photo = document.createElement('img');
+				photo.src = image.src;
+				photo.alt = '';
+				photo.className = 'location-photo-large';
+				overlay.querySelector('.modal').appendChild(photo);
+			});
+			row.appendChild(image);
+		}
 		const label = el('span', 'tree-label', node.name);
 		const badge = el('span', 'badge', String(node.total_qty || 0));
-		row.appendChild(caret);
 		row.appendChild(label);
 		row.appendChild(badge);
 		row.appendChild(buildActions(type, node));
 		row.addEventListener('click', function (e) {
 			if (e.target.closest('.row-btn')) { return; }
-			if (hasKids) { toggleBranch(li, caret, key); }
-			if (type === 'slot') { selectSlot(node); }
+			if (type === 'location') { selectLocation(node, row); }
+			else if (type === 'cabinet') { selectCabinet(node, row); }
+			else { selectSlot(node, row); }
 		});
 		const children = document.createElement('ul');
 		if (type === 'location') {
-			(node.cabinets || []).forEach(function (cab) { children.appendChild(buildBranch('cabinet', cab, key)); });
+			(node.cabinets || []).forEach(function (cab) { children.appendChild(buildBranch('cabinet', cab)); });
 		} else if (type === 'cabinet') {
-			(node.slots || []).forEach(function (slot) { children.appendChild(buildBranch('slot', slot, key)); });
+			(node.slots || []).forEach(function (slot) { children.appendChild(buildBranch('slot', slot)); });
 		}
 		li.appendChild(row);
 		li.appendChild(children);
-		if (expanded.has(key)) { children.classList.add('open'); caret.textContent = hasKids ? '\u25BC' : ''; }
+		children.classList.add('open');
 		return li;
-	}
-
-	function toggleBranch(li, caret, key) {
-		const children = li.querySelector('ul');
-		const open = children.classList.toggle('open');
-		caret.textContent = open ? '\u25BC' : '\u25B6';
-		if (open) { expanded.add(key); } else { expanded.delete(key); }
 	}
 
 	function buildActions(type, node) {
@@ -347,14 +412,14 @@
 		if (type === 'location') {
 			wrap.appendChild(rowBtn('+', T('Create cabinet'), function () { addChildForm('cabinet', node, function (parent, values) { return api('POST', '/cabinet', { location_id: parent.id, name: values.name, description: values.description }); }); }));
 			wrap.appendChild(rowBtn('\u270E', T('Rename'), function () { renaming('location', node); }));
-			if (isAdmin) { wrap.appendChild(rowBtn('\u00D7', T('Delete'), function () { confirmAction(T('Really delete location "{name}"?', { name: node.name }), function () { return api('DELETE', '/location/' + node.id); }); })); }
+			wrap.appendChild(rowBtn('\u00D7', T('Delete'), function () { confirmAction(T('Really delete location "{name}"?', { name: node.name }), function () { return api('DELETE', '/location/' + node.id); }); }));
 		} else if (type === 'cabinet') {
 			wrap.appendChild(rowBtn('+', T('Create slot'), function () { addChildForm('slot', node, function (parent, values) { return api('POST', '/slot', { cabinet_id: parent.id, name: values.name, description: values.description }); }); }));
 			wrap.appendChild(rowBtn('\u270E', T('Rename'), function () { renaming('cabinet', node); }));
-			if (isAdmin) { wrap.appendChild(rowBtn('\u00D7', T('Delete'), function () { confirmAction(T('Really delete cabinet "{name}"?', { name: node.name }), function () { return api('DELETE', '/cabinet/' + node.id); }); })); }
+			wrap.appendChild(rowBtn('\u00D7', T('Delete'), function () { confirmAction(T('Really delete cabinet "{name}"?', { name: node.name }), function () { return api('DELETE', '/cabinet/' + node.id); }); }));
 		} else if (type === 'slot') {
 			wrap.appendChild(rowBtn('\u270E', T('Rename'), function () { renaming('slot', node); }));
-			if (isAdmin) { wrap.appendChild(rowBtn('\u00D7', T('Delete'), function () { confirmAction(T('Really delete slot "{name}"?', { name: node.name }), function () { return api('DELETE', '/slot/' + node.id); }); })); }
+			wrap.appendChild(rowBtn('\u00D7', T('Delete'), function () { confirmAction(T('Really delete slot "{name}"?', { name: node.name }), function () { return api('DELETE', '/slot/' + node.id); }); }));
 		}
 		return wrap;
 	}
@@ -372,13 +437,14 @@
 		openFormModal({
 			title: T('Create {type} in {parent}', { type: names[childType], parent: parent.name }),
 			fields: [
-				{ name: 'name', label: 'Name', required: true, placeholder: childType === 'cabinet' ? T('e.g. Cabinet A') : T('e.g. Slot 1') },
-				{ name: 'description', label: T('Description'), placeholder: 'optional' },
+				{ name: 'name', label: T('Name'), required: true, placeholder: childType === 'cabinet' ? T('e.g. Cabinet A') : T('e.g. Slot 1') },
+				{ name: 'description', label: T('Description') },
 			],
 			onSubmit: function (values) {
 				return submitFn(parent, values).then(function () {
-					if (parent._key) { expanded.add(parent._key); }
-					return loadTree();
+					return loadTree().then(function () {
+						if (childType === 'cabinet') { updateAddArticleState(T('Select a cabinet.')); }
+					});
 				});
 			},
 		});
@@ -391,73 +457,232 @@
 				{ name: 'name', label: T('New name'), required: true, value: node.name },
 				{ name: 'description', label: T('Description'), value: node.description || '' },
 			],
+			file: type === 'location' ? {
+				label: T('Photo'),
+				existingUrl: node.has_image ? API + '/location/' + node.id + '/image?v=' + Date.now() : null,
+			} : null,
 			onSubmit: function (values) {
 				const path = type === 'location' ? '/location/' : type === 'cabinet' ? '/cabinet/' : '/slot/';
-				return api('PUT', path + node.id, values).then(loadTree);
+				return api('PUT', path + node.id, {
+					name: values.name,
+					description: values.description,
+				}).then(function () {
+					return type === 'location'
+						? uploadLocationImage(node.id, values._image)
+						: undefined;
+				}).then(loadTree);
 			},
 		});
 	}
 
-	function selectSlot(slot) {
+	function setSelectedRow(row) {
 		document.querySelectorAll('.tree-row.selected').forEach(function (r) { r.classList.remove('selected'); });
-		const row = document.querySelector('[data-slot-id="' + slot.id + '"]');
 		if (row) { row.classList.add('selected'); }
+	}
+
+	function isMobileLayout() {
+		return window.matchMedia
+			? window.matchMedia('(max-width: 760px)').matches
+			: window.innerWidth <= 760;
+	}
+
+	function setupLocationSidebar() {
+		const layout = document.querySelector('.lager-layout');
+		const buttons = [
+			document.getElementById('lager-toggle-locations-btn'),
+			document.getElementById('lager-toggle-locations-pane-btn'),
+		];
+		let isOpen = !isMobileLayout();
+		syncLocationSidebarLayout(layout, buttons, isOpen);
+		window.addEventListener('resize', function () {
+			syncLocationSidebarLayout(layout, buttons, isOpen);
+		});
+		buttons.forEach(function (button) {
+			button.addEventListener('click', function () {
+				isOpen = !isOpen;
+				syncLocationSidebarLayout(layout, buttons, isOpen);
+			});
+		});
+	}
+
+	function syncLocationSidebarLayout(layout, buttons, isOpen) {
+		if (isMobileLayout()) {
+			layout.classList.remove('sidebar-collapsed');
+			layout.classList.toggle('mobile-sidebar-open', isOpen);
+		} else {
+			layout.classList.remove('mobile-sidebar-open');
+			layout.classList.toggle('sidebar-collapsed', !isOpen);
+		}
+		const label = T(isOpen ? 'Hide locations' : 'Show locations');
+		buttons.forEach(function (button) {
+			button.setAttribute('aria-expanded', String(isOpen));
+			button.setAttribute('aria-label', label);
+			button.title = label;
+		});
+	}
+
+	function clearSlotDetail() {
 		const detail = document.getElementById('lager-detail');
+		detail.innerHTML = '';
+		detail.classList.add('detail-empty');
+	}
+
+	function selectLocation(location, row) {
+		selectedCabinet = null;
+		selectedSlot = null;
+		setSelectedRow(row);
+		const detail = document.getElementById('lager-detail');
+		detail.dataset.viewKey = 'location:' + location.id;
+		detail.innerHTML = '';
+		detail.classList.remove('detail-empty');
+		const title = el('div', 'detail-title', location.name);
+		const desc = el('div', 'detail-desc', location.description || '');
+		const items = document.createElement('div');
+		items.id = 'lager-location-items';
+		detail.appendChild(title);
+		detail.appendChild(desc);
+		detail.appendChild(items);
+		updateAddArticleState((location.cabinets || []).length ? T('Select a cabinet.') : T('Create a cabinet first.'));
+		loadLocationDetail(location.id);
+	}
+
+	function loadLocationDetail(locationId) {
+		const detail = document.getElementById('lager-detail');
+		const wrap = document.getElementById('lager-location-items');
+		if (!wrap || detail.dataset.viewKey !== 'location:' + locationId) { return Promise.resolve(); }
+		return api('GET', '/stock/location/' + locationId).then(function (data) {
+			if (detail.dataset.viewKey === 'location:' + locationId) {
+				renderStockItems(wrap, data.items, true);
+			}
+		}).catch(function (error) { toast(error.message, true); });
+	}
+
+	function selectCabinet(cabinet, row) {
+		selectedCabinet = cabinet;
+		selectedSlot = null;
+		setSelectedRow(row);
+		const detail = document.getElementById('lager-detail');
+		detail.dataset.viewKey = 'cabinet:' + cabinet.id;
+		detail.innerHTML = '';
+		detail.classList.remove('detail-empty');
+		const title = el('div', 'detail-title', cabinet.name);
+		const desc = el('div', 'detail-desc', cabinet.description || '');
+		const items = document.createElement('div');
+		items.id = 'lager-cabinet-items';
+		detail.appendChild(title);
+		detail.appendChild(desc);
+		detail.appendChild(items);
+		updateAddArticleState('');
+		api('GET', '/stock/cabinet/' + cabinet.id).then(function (data) {
+			if (detail.dataset.viewKey === 'cabinet:' + cabinet.id) {
+				renderStockItems(items, data.items, true);
+			}
+		}).catch(function (error) { toast(error.message, true); });
+	}
+
+	function selectSlot(slot, row) {
+		selectedCabinet = null;
+		selectedSlot = slot;
+		setSelectedRow(row || document.querySelector('[data-slot-id="' + slot.id + '"]'));
+		updateAddArticleState('');
+		const detail = document.getElementById('lager-detail');
+		detail.dataset.viewKey = 'slot:' + slot.id;
 		detail.innerHTML = '';
 		detail.classList.remove('detail-empty');
 		const title = el('div', 'detail-title', slot.name);
 		const desc = el('div', 'detail-desc', slot.description || '');
-		const actions = el('div', 'detail-actions');
-		const addBtn = el('button', 'btn primary', T('+ Add article'));
-		addBtn.type = 'button';
-		addBtn.addEventListener('click', function () {
-			openFormModal({
-				title: T('Create article in {slot}', { slot: slot.name }),
-				fields: [
-					{ name: 'article', label: T('Article'), required: true, placeholder: T('e.g. Screwdriver 6 mm') },
-					{ name: 'description', label: T('Description'), placeholder: 'optional' },
-					{ name: 'ean', label: 'EAN / Code', placeholder: T('e.g. 4001234567890 (optional)') },
-					{ name: 'quantity', label: T('Initial stock'), type: 'number', min: 0, value: '0' },
-				],
-				file: { label: T('Photo') },
-				onSubmit: function (values) {
-					const imgFile = values._image;
-					return api('POST', '/stock', {
-						slot_id: slot.id,
-						article: values.article,
-						description: values.description,
-						quantity: parseInt(values.quantity, 10) || 0,
-						ean: values.ean || null,
-					}).then(function (item) {
-						return uploadItemImage(item && item.id ? item.id : null, imgFile);
-					}).then(function () { return loadSlotDetail(slot.id); });
-				},
-			});
-		});
-		actions.appendChild(addBtn);
 		const tableWrap = document.createElement('div');
 		tableWrap.id = 'lager-slot-items';
 		detail.appendChild(title);
 		detail.appendChild(desc);
-		detail.appendChild(actions);
 		detail.appendChild(tableWrap);
 		loadSlotDetail(slot.id);
 	}
 
+	function updateAddArticleState(message) {
+		const addButton = document.getElementById('lager-add-article-btn');
+		const hint = document.getElementById('lager-add-article-hint');
+		addButton.disabled = !selectedSlot && !selectedCabinet;
+		hint.textContent = message;
+	}
+
+	function openCreateArticleForm(container, type) {
+		const cabinet = type === 'cabinet' ? container : null;
+		const slot = type === 'slot' ? container : null;
+		const containerName = slot ? slot.name : cabinet.name;
+		openFormModal({
+			title: T('Create article in {container}', { container: containerName }),
+			fields: [
+				{ name: 'article', label: T('Article'), required: true, placeholder: T('e.g. Screwdriver 6 mm') },
+				{ name: 'manufacturer', label: T('Manufacturer') },
+				{ name: 'notes', label: T('Notes') },
+				{ name: 'ean', label: T('EAN / Code'), placeholder: T('e.g. 4001234567890') },
+				{ name: 'quantity', label: T('Initial stock'), type: 'number', min: 0, value: '0' },
+				{ name: 'minimum_quantity', label: T('Minimum stock'), type: 'number', min: 0, value: '0' },
+				{ name: 'tags', label: T('Tags'), placeholder: T('e.g. Vegan') },
+			],
+			file: { label: T('Photo') },
+			onSubmit: function (values) {
+				const imgFile = values._image;
+				const body = {
+					article: values.article,
+					manufacturer: values.manufacturer,
+					notes: values.notes,
+					quantity: parseInt(values.quantity, 10) || 0,
+					minimum_quantity: parseInt(values.minimum_quantity, 10) || 0,
+					ean: values.ean || null,
+					tags: values.tags,
+				};
+				body[slot ? 'slot_id' : 'cabinet_id'] = container.id;
+				return api('POST', '/stock', body).then(function (item) {
+					return uploadItemImage(item && item.id ? item.id : null, imgFile);
+				}).then(function () {
+					return slot ? loadSlotDetail(slot.id) : loadCabinetDetail(cabinet.id);
+				});
+			},
+		});
+	}
+
 	function loadSlotDetail(slotId) {
 		return api('GET', '/stock/slot/' + slotId).then(function (data) {
+			const detail = document.getElementById('lager-detail');
 			const wrap = document.getElementById('lager-slot-items');
-			if (!wrap) { return; }
-			wrap.innerHTML = '';
-			if (!data.items.length) { wrap.appendChild(el('div', 'stock-empty', T('No articles in this slot.'))); return; }
-			const table = el('table', 'stock-table');
-			const thead = document.createElement('thead');
-			const headRow = document.createElement('tr');
-			[T('Article'), 'EAN', T('Quantity'), ''].forEach(function (h) { headRow.appendChild(el('th', null, h)); });
-			thead.appendChild(headRow);
-			table.appendChild(thead);
-			const tbody = document.createElement('tbody');
-			data.items.forEach(function (item) {
+			if (!wrap || detail.dataset.viewKey !== 'slot:' + slotId) { return; }
+			renderStockItems(wrap, data.items, false);
+		}).catch(function (e) { toast(e.message, true); });
+	}
+
+	function loadCabinetDetail(cabinetId) {
+		return api('GET', '/stock/cabinet/' + cabinetId).then(function (data) {
+			const detail = document.getElementById('lager-detail');
+			const wrap = document.getElementById('lager-cabinet-items');
+			if (!wrap || detail.dataset.viewKey !== 'cabinet:' + cabinetId) { return; }
+			renderStockItems(wrap, data.items, true);
+		}).catch(function (e) { toast(e.message, true); });
+	}
+
+	function loadItemContainer(item) {
+		const viewKey = document.getElementById('lager-detail').dataset.viewKey || '';
+		if (viewKey.indexOf('location:') === 0) { return loadLocationDetail(viewKey.slice(9)); }
+		if (viewKey.indexOf('cabinet:') === 0) { return loadCabinetDetail(viewKey.slice(8)); }
+		if (viewKey.indexOf('slot:') === 0) { return loadSlotDetail(viewKey.slice(5)); }
+		return item.slot_id ? loadSlotDetail(item.slot_id) : loadCabinetDetail(item.cabinet_id);
+	}
+
+	function renderStockItems(wrap, items, showStoragePlace) {
+		wrap.innerHTML = '';
+		if (!items.length) { wrap.appendChild(el('div', 'stock-empty', T('No articles here.'))); return; }
+		const table = el('table', 'stock-table');
+		const thead = document.createElement('thead');
+		const headRow = document.createElement('tr');
+		const headers = [T('Article'), T('Manufacturer'), T('EAN'), T('Quantity')];
+		if (showStoragePlace) { headers.push(T('Storage place')); }
+		headers.push('');
+		headers.forEach(function (h) { headRow.appendChild(el('th', null, h)); });
+		thead.appendChild(headRow);
+		table.appendChild(thead);
+		const tbody = document.createElement('tbody');
+		items.forEach(function (item) {
 				const tr = document.createElement('tr');
 				const artTd = document.createElement('td');
 				if (item.has_image) {
@@ -475,8 +700,12 @@
 				}
 				artTd.appendChild(document.createTextNode(item.article));
 				tr.appendChild(artTd);
+				const metadata = [item.notes, (item.tags || []).map(function (tag) { return tag.name; }).join(', ')].filter(Boolean).join(' · ');
+				tr.appendChild(el('td', 'stock-manufacturer', item.manufacturer || ''));
+				if (metadata) { artTd.appendChild(el('div', 'item-meta', metadata)); }
 				tr.appendChild(el('td', 'ean-cell', item.ean || ''));
 				tr.appendChild(el('td', 'qty', String(item.quantity)));
+				if (showStoragePlace) { tr.appendChild(el('td', null, item.container_path || '')); }
 				const actTd = document.createElement('td');
 				const qrBtn = el('button', 'row-btn', '\u{1F4F7}');
 				qrBtn.type = 'button';
@@ -495,18 +724,15 @@
 				actTd.appendChild(inBtn);
 				actTd.appendChild(outBtn);
 				actTd.appendChild(editBtn);
-				if (isAdmin) {
-					const delBtn = el('button', 'row-btn', '\u00D7');
-					delBtn.type = 'button'; delBtn.title = T('Delete');
-					delBtn.addEventListener('click', function () { confirmAction(T('Delete article?'), function () { return api('DELETE', '/stock/' + item.id); }, function () { loadSlotDetail(item.slot_id); loadTree(); }); });
-					actTd.appendChild(delBtn);
-				}
+				const delBtn = el('button', 'row-btn', '\u00D7');
+				delBtn.type = 'button'; delBtn.title = T('Delete');
+				delBtn.addEventListener('click', function () { confirmAction(T('Delete article?'), function () { return api('DELETE', '/stock/' + item.id); }, function () { loadItemContainer(item); loadTree(); }); });
+				actTd.appendChild(delBtn);
 				tr.appendChild(actTd);
 				tbody.appendChild(tr);
 			});
-			table.appendChild(tbody);
-			wrap.appendChild(table);
-		}).catch(function (e) { toast(e.message, true); });
+		table.appendChild(tbody);
+		wrap.appendChild(table);
 	}
 
 	function movementForm(item, type) {
@@ -515,13 +741,13 @@
 			title: (type === 'in' ? T('Stock in') : T('Stock out')) + ' \u00B7 ' + item.article,
 			fields: [
 				{ name: 'quantity', label: T('Quantity') + (max !== null ? ' (' + T('max') + ' ' + max + ')' : ''), type: 'number', min: 1, value: '1', required: true },
-				{ name: 'note', label: T('Note'), placeholder: 'optional' },
+				{ name: 'note', label: T('Note') },
 			],
 			onSubmit: function (values) {
 				return api('POST', '/movement', {
 					stock_id: item.id, type: type,
 					quantity: parseInt(values.quantity, 10), note: values.note,
-				}).then(function () { loadSlotDetail(item.slot_id); loadTree(); });
+				}).then(function () { loadItemContainer(item); loadTree(); });
 			},
 		});
 	}
@@ -531,8 +757,11 @@
 			title: T('Edit article'),
 			fields: [
 				{ name: 'article', label: T('Article'), required: true, value: item.article },
-				{ name: 'description', label: T('Description'), value: item.description || '' },
-				{ name: 'ean', label: 'EAN / Code', value: item.ean || '' },
+				{ name: 'manufacturer', label: T('Manufacturer'), value: item.manufacturer || '' },
+				{ name: 'notes', label: T('Notes'), value: item.notes || item.description || '' },
+				{ name: 'ean', label: T('EAN / Code'), value: item.ean || '' },
+				{ name: 'minimum_quantity', label: T('Minimum stock'), type: 'number', min: 0, value: String(item.minimum_quantity || 0) },
+				{ name: 'tags', label: T('Tags'), value: (item.tags || []).map(function (tag) { return tag.name; }).join(', ') },
 			],
 			file: {
 				label: T('Photo'),
@@ -541,9 +770,11 @@
 			onSubmit: function (values) {
 				const imgFile = values._image;
 				return api('PUT', '/stock/' + item.id, {
-					article: values.article, description: values.description, ean: values.ean || null,
+					article: values.article, manufacturer: values.manufacturer, notes: values.notes,
+					ean: values.ean || null, tags: values.tags,
+					minimum_quantity: parseInt(values.minimum_quantity, 10) || 0,
 				}).then(function () { return uploadItemImage(item.id, imgFile); })
-				.then(function () { loadSlotDetail(item.slot_id); });
+				.then(function () { loadItemContainer(item); });
 			},
 		});
 	}
@@ -561,6 +792,68 @@
 		modal.appendChild(img);
 	}
 
+	function openTagManager() {
+		api('GET', '/tags').then(function (tags) {
+			const overlay = openModal({ title: T('Manage tags') });
+			const modal = overlay.querySelector('.modal');
+			const form = document.createElement('form');
+			const name = document.createElement('input');
+			name.type = 'text';
+			name.required = true;
+			name.placeholder = T('e.g. Vegan');
+			const add = el('button', 'btn primary', T('Add tag'));
+			add.type = 'submit';
+			form.appendChild(name);
+			form.appendChild(add);
+			const error = el('div', 'modal-error');
+			const list = el('div', 'tag-manager-list');
+			modal.insertBefore(form, modal.querySelector('.modal-buttons'));
+			modal.insertBefore(error, modal.querySelector('.modal-buttons'));
+			modal.insertBefore(list, modal.querySelector('.modal-buttons'));
+
+			function renderTags(items) {
+				list.innerHTML = '';
+				if (!items.length) { list.appendChild(el('p', null, T('No tags created yet.'))); }
+				items.forEach(function (tag) {
+					const row = el('div', 'tag-manager-row');
+					const input = document.createElement('input');
+					input.type = 'text';
+					input.value = tag.name;
+					input.setAttribute('aria-label', T('Tag'));
+					const save = el('button', 'btn', T('Save'));
+					save.type = 'button';
+					save.addEventListener('click', function () {
+						api('PUT', '/tag/' + tag.id, { name: input.value }).then(refresh).catch(function (e) { error.textContent = e.message; });
+					});
+					const remove = el('button', 'btn', T('Delete'));
+					remove.type = 'button';
+					remove.addEventListener('click', function () {
+						api('DELETE', '/tag/' + tag.id).then(refresh).catch(function (e) { error.textContent = e.message; });
+					});
+					row.appendChild(input);
+					row.appendChild(save);
+					row.appendChild(remove);
+					list.appendChild(row);
+				});
+			}
+			function refresh() {
+				return api('GET', '/tags').then(renderTags);
+			}
+			renderTags(tags);
+			form.addEventListener('submit', function (event) {
+				event.preventDefault();
+				add.disabled = true;
+				error.textContent = '';
+				api('POST', '/tag', { name: name.value }).then(function () {
+					name.value = '';
+					return refresh();
+				}).catch(function (e) {
+					error.textContent = e.message;
+				}).finally(function () { add.disabled = false; });
+			});
+		}).catch(function (e) { toast(e.message, true); });
+	}
+
 	// === Search ===
 	function doSearch(q) {
 		const box = document.getElementById('lager-search-results');
@@ -571,13 +864,20 @@
 				const div = el('div', 'search-result');
 				const a = el('div', 'article', item.article);
 				const p = el('div', 'path', item.slot_path + ' \u00B7 ' + T('Stock') + ': ' + item.quantity + (item.ean ? ' \u00B7 ' + item.ean : ''));
-				div.appendChild(a); div.appendChild(p);
+				const metadata = [item.manufacturer, item.notes, (item.tags || []).map(function (tag) { return tag.name; }).join(', ')].filter(Boolean).join(' · ');
+				div.appendChild(a);
+				if (metadata) { div.appendChild(el('div', 'metadata', metadata)); }
+				div.appendChild(p);
 				div.addEventListener('click', function () {
 					hideSearchResults();
 					api('GET', '/tree').then(function (locations) {
+						const found = item.slot_id === null ? null : findSlot(locations, item.slot_id);
+						const cabinet = found ? { location: found.loc, cabinet: found.cab } : findCabinet(locations, item.cabinet_id);
 						renderTree(locations);
-						const found = findSlot(locations, item.slot_id);
-						if (found) { expanded.add(found.loc._key); expanded.add(found.cab._key); selectSlot(found.slot); }
+						if (found) { selectSlot(found.slot); }
+						else if (cabinet) {
+							selectCabinet(cabinet.cabinet, document.querySelector('[data-cabinet-id="' + cabinet.cabinet.id + '"]'));
+						}
 					});
 				});
 				box.appendChild(div);
@@ -591,11 +891,17 @@
 			for (const cab of (loc.cabinets || [])) {
 				for (const slot of (cab.slots || [])) {
 					if (slot.id === slotId) {
-						loc._key = keyFor(null, 'location', loc);
-						cab._key = keyFor(loc._key, 'cabinet', cab);
 						return { loc, cab, slot };
 					}
 				}
+			}
+		}
+		return null;
+	}
+	function findCabinet(locations, cabinetId) {
+		for (const loc of locations) {
+			for (const cabinet of (loc.cabinets || [])) {
+				if (Number(cabinet.id) === Number(cabinetId)) { return { location: loc, cabinet: cabinet }; }
 			}
 		}
 		return null;
@@ -1708,9 +2014,15 @@
 			gotoBtn.addEventListener('click', function () {
 				closeScanModal();
 				api('GET', '/tree').then(function (locations) {
+					const foundSlot = item.slot_id === null ? null : findSlot(locations, item.slot_id);
+					const cabinet = foundSlot
+						? { location: foundSlot.loc, cabinet: foundSlot.cab }
+						: findCabinet(locations, item.cabinet_id);
 					renderTree(locations);
-					const foundSlot = findSlot(locations, item.slot_id);
-					if (foundSlot) { expanded.add(foundSlot.loc._key); expanded.add(foundSlot.cab._key); selectSlot(foundSlot.slot); }
+					if (foundSlot) { selectSlot(foundSlot.slot); }
+					else if (cabinet) {
+						selectCabinet(cabinet.cabinet, document.querySelector('[data-cabinet-id="' + cabinet.cabinet.id + '"]'));
+					}
 				});
 			});
 			actions.appendChild(againBtn);
@@ -1744,7 +2056,7 @@
 		const label = el('div', 'qr-label', code);
 		content.appendChild(label);
 		if (item.ean) {
-			const eanLabel = el('div', 'qr-ean', 'EAN: ' + item.ean);
+			const eanLabel = el('div', 'qr-ean', T('EAN:') + ' ' + item.ean);
 			content.appendChild(eanLabel);
 		}
 		const artLabel = el('div', 'qr-article', item.article);
@@ -1782,6 +2094,44 @@
 				}
 			}
 		}
+	}
+
+// === Shopping list ===
+	function openShoppingListModal() {
+		const overlay = openModal({ title: T('Shopping list') });
+		const modal = overlay.querySelector('.modal');
+		modal.classList.add('shopping-list-modal');
+		const content = el('div', 'shopping-list-content', T('Loading \u2026'));
+		modal.insertBefore(content, modal.querySelector('.modal-buttons'));
+		api('GET', '/stock/shopping-list').then(function (items) {
+			content.innerHTML = '';
+			if (!items.length) {
+				content.appendChild(el('div', 'stock-empty', T('No items below minimum stock.')));
+				return;
+			}
+			const table = el('table', 'stock-table shopping-list-table');
+			const thead = document.createElement('thead');
+			const header = document.createElement('tr');
+			[T('Article'), T('Quantity'), T('Minimum stock'), T('To buy'), T('Storage place')].forEach(function (label) {
+				header.appendChild(el('th', null, label));
+			});
+			thead.appendChild(header);
+			table.appendChild(thead);
+			const tbody = document.createElement('tbody');
+			items.forEach(function (item) {
+				const row = document.createElement('tr');
+				row.appendChild(el('td', null, item.article));
+				row.appendChild(el('td', 'qty', String(item.quantity)));
+				row.appendChild(el('td', 'qty', String(item.minimum_quantity)));
+				row.appendChild(el('td', 'qty', String(item.needed_quantity)));
+				row.appendChild(el('td', null, item.slot_path));
+				tbody.appendChild(row);
+			});
+			table.appendChild(tbody);
+			content.appendChild(table);
+		}).catch(function (error) {
+			content.textContent = error.message;
+		});
 	}
 
 // === History ===
@@ -2014,7 +2364,7 @@
 			Promise.resolve()
 				.then(function () { return opts.onSubmit(values); })
 				.then(function () { overlay.remove(); toast(T('Saved.')); })
-				.catch(function (err) { errorDiv.textContent = err.message || 'Fehler'; submitBtn.disabled = false; });
+				.catch(function (err) { errorDiv.textContent = err.message || T('Unexpected error.'); submitBtn.disabled = false; });
 		});
 	}
 
@@ -2029,10 +2379,18 @@
 		yes.addEventListener('click', function () {
 			yes.disabled = true;
 			Promise.resolve().then(function () { return actionFn(); })
-				.then(function () { overlay.remove(); toast(T('Deleted.')); loadTree();
-					const detail = document.getElementById('lager-detail');
-					detail.innerHTML = T('No slot selected.'); detail.classList.add('detail-empty');
-					if (onDone) { return onDone(); }
+				.then(function () {
+					overlay.remove();
+					toast(T('Deleted.'));
+					if (onDone) {
+						loadTree();
+						return onDone();
+					}
+					selectedCabinet = null;
+					selectedSlot = null;
+					clearSlotDetail();
+					updateAddArticleState(T('Select a location.'));
+					return loadTree();
 				})
 				.catch(function (err) { overlay.remove(); toast(err.message, true); });
 		});

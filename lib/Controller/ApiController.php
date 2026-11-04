@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Controller;
+namespace OCA\Kuechenlager\Controller;
 
-use OCA\Lager\AppInfo\Application;
-use OCA\Lager\Service\LagerService;
+use OCA\Kuechenlager\AppInfo\Application;
+use OCA\Kuechenlager\Service\LagerService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
@@ -49,6 +49,30 @@ class ApiController extends Controller {
 
 	#[NoAdminRequired]
 	#[NoCSRFRequired]
+	public function stockByCabinet(int $cabinet_id): JSONResponse {
+		return $this->handle(function () use ($cabinet_id): array {
+			return $this->service->getStockByCabinet($cabinet_id);
+		});
+	}
+
+	#[NoAdminRequired]
+	#[NoCSRFRequired]
+	public function stockByLocation(int $location_id): JSONResponse {
+		return $this->handle(function () use ($location_id): array {
+			return $this->service->getStockByLocation($location_id);
+		});
+	}
+
+	#[NoAdminRequired]
+	#[NoCSRFRequired]
+	public function shoppingList(): JSONResponse {
+		return $this->handle(function (): array {
+			return $this->service->getShoppingList();
+		});
+	}
+
+	#[NoAdminRequired]
+	#[NoCSRFRequired]
 	public function history(int $limit = 100, ?string $slot_id = null, ?string $article = null): JSONResponse {
 		return $this->handle(function () use ($limit, $slot_id, $article): array {
 			return $this->service->getHistory($limit, $slot_id, $article);
@@ -77,6 +101,7 @@ class ApiController extends Controller {
 		});
 	}
 
+	#[NoAdminRequired]
 	public function deleteLocation(int $id): JSONResponse {
 		return $this->handle(function () use ($id): array {
 			$this->service->deleteLocation($id);
@@ -98,6 +123,7 @@ class ApiController extends Controller {
 		});
 	}
 
+	#[NoAdminRequired]
 	public function deleteCabinet(int $id): JSONResponse {
 		return $this->handle(function () use ($id): array {
 			$this->service->deleteCabinet($id);
@@ -119,6 +145,7 @@ class ApiController extends Controller {
 		});
 	}
 
+	#[NoAdminRequired]
 	public function deleteSlot(int $id): JSONResponse {
 		return $this->handle(function () use ($id): array {
 			$this->service->deleteSlot($id);
@@ -127,27 +154,66 @@ class ApiController extends Controller {
 	}
 
 	#[NoAdminRequired]
-	public function createStock(int $slot_id, string $article, ?string $description = null, int $quantity = 0, ?string $ean = null): JSONResponse {
+	public function createStock(?int $slot_id = null, string $article = '', ?string $description = null, int $quantity = 0, ?string $ean = null, ?int $cabinet_id = null, int $minimum_quantity = 0): JSONResponse {
+		$manufacturer = $this->request->getParam('manufacturer');
+		$notes = $this->request->getParam('notes');
+		$tags = $this->request->getParam('tags');
 		// Fallback: read from JSON body if parameter not resolved
 		if ($ean === null) {
 			$ean = $this->getJsonParam('ean');
 		}
-		return $this->handle(function () use ($slot_id, $article, $description, $quantity, $ean): array {
-			return $this->service->createStock($slot_id, $article, $description, $quantity, $ean);
+		return $this->handle(function () use ($slot_id, $cabinet_id, $article, $description, $quantity, $ean, $manufacturer, $notes, $tags, $minimum_quantity): array {
+			if (($slot_id === null) === ($cabinet_id === null)) {
+			throw new \InvalidArgumentException($this->l10n->t('Select a cabinet or slot.'));
+			}
+			$create = $slot_id === null
+			? $this->service->createStockInCabinet(
+				$cabinet_id,
+				$article,
+				$notes !== null ? (string)$notes : $description,
+				$quantity,
+				$ean,
+				$manufacturer !== null ? (string)$manufacturer : null,
+				$this->parseTagNames($tags),
+				$minimum_quantity,
+			)
+			: $this->service->createStock(
+				$slot_id,
+				$article,
+				$notes !== null ? (string)$notes : $description,
+				$quantity,
+				$ean,
+				$manufacturer !== null ? (string)$manufacturer : null,
+				$this->parseTagNames($tags),
+				$minimum_quantity,
+			);
+			return $create;
 		});
 	}
 
 	#[NoAdminRequired]
-	public function updateStock(int $id, ?string $article = null, ?string $description = null, ?string $ean = null): JSONResponse {
+	public function updateStock(int $id, ?string $article = null, ?string $description = null, ?string $ean = null, ?int $minimum_quantity = null): JSONResponse {
+		$manufacturer = $this->request->getParam('manufacturer');
+		$notes = $this->request->getParam('notes');
+		$tags = $this->request->getParam('tags');
 		// Fallback: read from JSON body if parameter not resolved
 		if ($ean === null && $this->request->getHeader('Content-Type') !== '') {
 			$ean = $this->getJsonParam('ean');
 		}
-		return $this->handle(function () use ($id, $article, $description, $ean): array {
-			return $this->service->updateStock($id, $article, $description, $ean);
+		return $this->handle(function () use ($id, $article, $description, $ean, $manufacturer, $notes, $tags, $minimum_quantity): array {
+			return $this->service->updateStock(
+				$id,
+				$article,
+				$notes !== null ? (string)$notes : $description,
+				$ean,
+				$manufacturer !== null ? (string)$manufacturer : null,
+				$tags !== null ? $this->parseTagNames($tags) : null,
+				$minimum_quantity,
+			);
 		});
 	}
 
+	#[NoAdminRequired]
 	public function deleteStock(int $id): JSONResponse {
 		return $this->handle(function () use ($id): array {
 			$this->service->deleteStock($id);
@@ -199,10 +265,85 @@ class ApiController extends Controller {
 				'Cache-Control' => 'no-store',
 			]);
 		}
+
 		return new DataDisplayResponse($data, Http::STATUS_OK, [
 			'Content-Type' => 'image/jpeg',
 			'Cache-Control' => 'no-cache',
 		]);
+	}
+
+	#[NoAdminRequired]
+	public function uploadLocationImage(int $id): JSONResponse {
+		return $this->handle(function () use ($id): array {
+			$file = $this->request->getUploadedFile('file');
+			if (!is_array($file) || (int)($file['error'] ?? \UPLOAD_ERR_NO_FILE) !== \UPLOAD_ERR_OK || empty($file['tmp_name'])) {
+				throw new \InvalidArgumentException($this->l10n->t('No image uploaded.'));
+			}
+			if ((int)$file['size'] > 10 * 1024 * 1024) {
+				throw new \InvalidArgumentException($this->l10n->t('Image is too large (max. 10 MB).'));
+			}
+			return $this->service->saveLocationImage($id, (string)$file['tmp_name']);
+		});
+	}
+
+	#[NoAdminRequired]
+	#[NoCSRFRequired]
+	public function getLocationImage(int $id): Response {
+		try {
+			$data = $this->service->getLocationImage($id);
+		} catch (DoesNotExistException) {
+			$data = null;
+		}
+		if ($data === null) {
+			return new DataResponse(['error' => $this->l10n->t('Not found.')], Http::STATUS_NOT_FOUND, [
+				'Cache-Control' => 'no-store',
+			]);
+		}
+
+		return new DataDisplayResponse($data, Http::STATUS_OK, [
+			'Content-Type' => 'image/jpeg',
+			'Cache-Control' => 'no-cache',
+		]);
+	}
+
+	#[NoAdminRequired]
+	#[NoCSRFRequired]
+	public function tags(): JSONResponse {
+		return $this->handle(function (): array {
+			return $this->service->getTags();
+		});
+	}
+
+	#[NoAdminRequired]
+	public function createTag(string $name): JSONResponse {
+		return $this->handle(function () use ($name): array {
+			return $this->service->createTag($name);
+		});
+	}
+
+	#[NoAdminRequired]
+	public function updateTag(int $id, string $name): JSONResponse {
+		return $this->handle(function () use ($id, $name): array {
+			return $this->service->updateTag($id, $name);
+		});
+	}
+
+	#[NoAdminRequired]
+	public function deleteTag(int $id): JSONResponse {
+		return $this->handle(function () use ($id): array {
+			$this->service->deleteTag($id);
+			return ['ok' => true];
+		});
+	}
+
+	/**
+	 * @return string[]
+	 */
+	private function parseTagNames(mixed $value): array {
+		if (!is_string($value) || trim($value) === '') {
+			return [];
+		}
+		return array_map('trim', explode(',', $value));
 	}
 
 	private function getJsonParam(string $key): ?string {

@@ -1,16 +1,20 @@
-# Lagerverwaltung für Nextcloud
+# Küchenlager für Nextcloud
 
-Eine schlanke Lagerhaltungs-App für Nextcloud: Verwalte deine Lagerorte, Regale und Fächer, buche Wareneingänge und -entnahmen und finde Artikel per Suche oder **Barcode/QR-Scan mit der Kamera**.
+Ein gemeinsames Inventarmanagement für Lebensmittel in Nextcloud. Verwalte Lagerorte, Küchenbestände und Einkäufe, durchsuche Artikel und kategorisiere sie mit eigenen Tags.
+
+Basiert auf der App [Lagerverwaltung von wenigdigital](https://github.com/wenigdigital/lager)
 
 ![Hauptansicht](docs/screenshots/01_main.png)
 
 ## Funktionen
 
-- **Lagerstruktur:** Lagerorte → Regale/Schränke → Fächer/Flächen (beliebig viele)
-- **Artikel:** Name, Beschreibung, EAN/Code, optional ein Foto (per Kamera oder Datei)
+- **Lagerstruktur:** Lagerorte mit optionalen Fotos → Regale/Schränke → Fächer
+- **Artikel:** Titel, Hersteller, Menge, Notizen, Tags und optional EAN/Code oder Foto
+- **Manuelle Pflege:** Artikel und Bestände ohne Kamera oder Scanner am PC verwalten
+- **Tags:** Eigene gemeinsame Kategorien wie vegan oder vegetarisch anlegen
 - **Lagerbewegungen:** Wareneingang und Entnahme buchen, mit Notiz und Benutzer
 - **Historie:** vollständige Bewegungs-Historie mit Datum, Typ, Menge und Benutzer
-- **Suche:** artikel- und EAN-Suche (Groß-/Kleinschreibung egal)
+- **Suche:** Titel, Hersteller, EAN, Notizen und Tags durchsuchen
 - **Cam-Scanning:** Barcode (EAN-13, EAN-8) und QR-Codes live mit der Kamera scannen – mit Rückkamera-Voreinstellung und Kamerawahl bei mehreren Kameras
 - **Foto-Scan:** Barcodes/QR-Codes auch aus einer Foto-Datei erkennen (robust, mit Entzerrung)
 - **QR/Barcode erzeugen:** zu jedem Artikel per Knopfdruck als QR-Code oder EAN-Barcode
@@ -28,12 +32,13 @@ Eine schlanke Lagerhaltungs-App für Nextcloud: Verwalte deine Lagerorte, Regale
 
 ## Installation
 
-1. App im [Nextcloud App-Store](https://apps.nextcloud.com/apps/lager) suchen und installieren, **oder**
-2. den Ordner in `apps/` (oder `apps-extra/`) kopieren und im Admin-Bereich aktivieren.
+Die eigenständige App-ID lautet `kuechenlager`. Sie kann parallel zur ursprünglichen App `lager` installiert werden und verwendet eine vollständig getrennte Datenbasis. Es findet kein Datenaustausch statt.
+
+Bis zur Veröffentlichung im Nextcloud App-Store den Ordner in `apps/` oder `apps-extra/` kopieren und im Admin-Bereich aktivieren.
 
 Voraussetzung: Nextcloud 30–36, PHP 8.1–8.4. Für das Cam-Scanning wird ein moderner Browser mit Kamera-Zugriff empfohlen (Chrome/Edge, Firefox).
 
-Löschen von Lagerorten, Regalen, Fächern und Artikeln ist ausschließlich Nextcloud-Administratoren erlaubt.
+Alle Nutzer mit Zugriff auf die App können gemeinsame Lagerorte, Regale, Fächer und Artikel löschen.
 
 ## Datenschutz
 

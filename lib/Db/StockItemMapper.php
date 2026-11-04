@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Db;
+namespace OCA\Kuechenlager\Db;
 
 use OCP\AppFramework\Db\QBMapper;
 use OCP\DB\QueryBuilder\IQueryBuilder;
@@ -13,7 +13,7 @@ use OCP\IDBConnection;
  */
 class StockItemMapper extends BaseMapper {
 	public function __construct(IDBConnection $db) {
-		parent::__construct($db, 'lager_stock', StockItem::class);
+		parent::__construct($db, 'kuechenlager_stock', StockItem::class);
 	}
 
 	/**
@@ -52,15 +52,45 @@ class StockItemMapper extends BaseMapper {
 	/**
 	 * @return StockItem[]
 	 */
+	public function findByCabinet(int $cabinetId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->getTableName())
+			->where($qb->expr()->eq('cabinet_id', $qb->createNamedParameter($cabinetId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('slot_id'))
+			->orderBy('article', 'ASC');
+		return $this->findEntities($qb);
+	}
+
+	public function findByCabinetAndArticle(int $cabinetId, string $article): ?StockItem {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->getTableName())
+			->where($qb->expr()->eq('cabinet_id', $qb->createNamedParameter($cabinetId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('slot_id'))
+			->andWhere($qb->expr()->eq('article', $qb->createNamedParameter($article)));
+		$results = $this->findEntities($qb);
+		return $results[0] ?? null;
+	}
+
+	/**
+	 * @return StockItem[]
+	 */
 	public function findByArticleLike(string $term): array {
 		$qb = $this->db->getQueryBuilder();
 		// Tabelle hat Collation utf8mb4_bin -> ohne LOWER() waere die Suche case-sensitiv
 		$lowerTerm = mb_strtolower($term);
-		$qb->select('*')
-			->from($this->getTableName())
-			->where($qb->expr()->like($qb->createFunction('LOWER(`article`)'), $qb->createNamedParameter('%' . $lowerTerm . '%')))
-			->orWhere($qb->expr()->like($qb->createFunction('LOWER(`ean`)'), $qb->createNamedParameter('%' . $lowerTerm . '%')))
-			->orderBy('article', 'ASC');
+		$pattern = $qb->createNamedParameter('%' . $lowerTerm . '%');
+		$qb->selectDistinct('stock.*')
+			->from($this->getTableName(), 'stock')
+			->leftJoin('stock', 'kuechenlager_stock_tags', 'stock_tag', 'stock.id = stock_tag.stock_id')
+			->leftJoin('stock_tag', 'kuechenlager_tags', 'tag', 'stock_tag.tag_id = tag.id')
+			->where($qb->expr()->like($qb->createFunction('LOWER(stock.article)'), $pattern))
+			->orWhere($qb->expr()->like($qb->createFunction('LOWER(stock.manufacturer)'), $pattern))
+			->orWhere($qb->expr()->like($qb->createFunction('LOWER(stock.description)'), $pattern))
+			->orWhere($qb->expr()->like($qb->createFunction('LOWER(stock.ean)'), $pattern))
+			->orWhere($qb->expr()->like($qb->createFunction('LOWER(tag.name)'), $pattern))
+			->orderBy('stock.article', 'ASC');
 		return $this->findEntities($qb);
 	}
 

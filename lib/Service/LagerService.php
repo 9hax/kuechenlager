@@ -2,21 +2,24 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Service;
+namespace OCA\Kuechenlager\Service;
 
-use OCA\Lager\Db\Cabinet;
-use OCA\Lager\Db\CabinetMapper;
-use OCA\Lager\Db\Location;
-use OCA\Lager\Db\LocationMapper;
-use OCA\Lager\Db\Movement;
-use OCA\Lager\Db\MovementMapper;
-use OCA\Lager\Db\Slot;
-use OCA\Lager\Db\SlotMapper;
-use OCA\Lager\Db\StockItem;
-use OCA\Lager\AppInfo\Application;
-use OCA\Lager\Db\StockItemMapper;
+use OCA\Kuechenlager\Db\Cabinet;
+use OCA\Kuechenlager\Db\CabinetMapper;
+use OCA\Kuechenlager\Db\Location;
+use OCA\Kuechenlager\Db\LocationMapper;
+use OCA\Kuechenlager\Db\Movement;
+use OCA\Kuechenlager\Db\MovementMapper;
+use OCA\Kuechenlager\Db\Slot;
+use OCA\Kuechenlager\Db\SlotMapper;
+use OCA\Kuechenlager\Db\StockItem;
+use OCA\Kuechenlager\AppInfo\Application;
+use OCA\Kuechenlager\Db\StockItemMapper;
+use OCA\Kuechenlager\Db\Tag;
+use OCA\Kuechenlager\Db\TagMapper;
 use OCP\Files\AppData\IAppDataFactory;
 use OCP\Files\IAppData;
+use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IL10N;
 use OCP\IDBConnection;
 use OCP\IUser;
@@ -33,6 +36,8 @@ class LagerService {
 		private IUserSession $userSession,
 		private IL10N $l10n,
 		private IAppDataFactory $appDataFactory,
+		private TagMapper $tagMapper,
+		private WebhookService $webhookService,
 	) {
 	}
 
@@ -50,9 +55,15 @@ class LagerService {
 		$stocks = $this->stockMapper->findAll();
 
 		$qtyBySlot = [];
+		$qtyByCabinet = [];
 		foreach ($stocks as $stock) {
-			$slotId = (int)$stock->getSlotId();
-			$qtyBySlot[$slotId] = ($qtyBySlot[$slotId] ?? 0) + (int)$stock->getQuantity();
+			if ($stock->getSlotId() !== null) {
+				$slotId = (int)$stock->getSlotId();
+				$qtyBySlot[$slotId] = ($qtyBySlot[$slotId] ?? 0) + (int)$stock->getQuantity();
+			} elseif ($stock->getCabinetId() !== null) {
+				$cabinetId = (int)$stock->getCabinetId();
+				$qtyByCabinet[$cabinetId] = ($qtyByCabinet[$cabinetId] ?? 0) + (int)$stock->getQuantity();
+			}
 		}
 
 		$slotsByCabinet = [];
@@ -69,7 +80,7 @@ class LagerService {
 			$cabId = (int)$cabinet->getId();
 			$cabArr = $cabinet->jsonSerialize();
 			$cabArr['slots'] = $slotsByCabinet[$cabId] ?? [];
-			$cabTotal = 0;
+			$cabTotal = $qtyByCabinet[$cabId] ?? 0;
 			foreach ($cabArr['slots'] as $s) { $cabTotal += (int)$s['total_qty']; }
 			$cabArr['total_qty'] = $cabTotal;
 			$cabinetsByLocation[$locId][] = $cabArr;
@@ -81,13 +92,10 @@ class LagerService {
 			$locArr = $location->jsonSerialize();
 			$cabArrs = $cabinetsByLocation[$locId] ?? [];
 			$totalQty = 0;
-			foreach ($cabArrs as $cabArr) {
-				foreach ($cabArr['slots'] as $slotArr) {
-					$totalQty += $slotArr['total_qty'];
-				}
-			}
+			foreach ($cabArrs as $cabArr) { $totalQty += $cabArr['total_qty']; }
 			$locArr['cabinets'] = $cabArrs;
 			$locArr['total_qty'] = $totalQty;
+			$locArr['has_image'] = $this->hasLocationImage($locId);
 			$result[] = $locArr;
 		}
 
@@ -112,14 +120,87 @@ class LagerService {
 	}
 
 	public function getStockBySlot(int $slotId): array {
-		$this->getSlot($slotId);
+		$slot = $this->getSlot($slotId);
 		$result = [];
 		foreach ($this->stockMapper->findBySlot($slotId) as $item) {
-			$arr = $item->jsonSerialize();
+			$arr = $this->stockResponse($item);
+			$arr['cabinet_id'] = (int)$slot['cabinet_id'];
+			$arr['slot_id'] = $slotId;
+			$arr['container_path'] = $slot['name'];
 			$arr['has_image'] = $this->hasItemImage((int)$item->getId());
 			$result[] = $arr;
 		}
 		return $result;
+	}
+
+	/**
+	 * @return array{cabinet: array<string, mixed>, items: array<int, array<string, mixed>>}
+	 */
+	public function getStockByCabinet(int $cabinetId): array {
+		$cabinet = $this->cabinetMapper->find($cabinetId);
+		return [
+			'cabinet' => $cabinet->jsonSerialize(),
+			'items' => $this->stockItemsForCabinet($cabinet),
+		];
+	}
+
+	/**
+	 * @return array{location: array<string, mixed>, items: array<int, array<string, mixed>>}
+	 */
+	public function getStockByLocation(int $locationId): array {
+		$location = $this->locationMapper->find($locationId);
+		$items = [];
+		foreach ($this->cabinetMapper->findByLocation($locationId) as $cabinet) {
+			array_push($items, ...$this->stockItemsForCabinet($cabinet));
+		}
+		return [
+			'location' => $location->jsonSerialize(),
+			'items' => $items,
+		];
+	}
+
+	/**
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function getShoppingList(): array {
+		$items = [];
+		foreach ($this->stockMapper->findAll() as $stock) {
+			if ($stock->getQuantity() >= $stock->getMinimumQuantity()) {
+				continue;
+			}
+			$item = $this->stockToSearchResult($stock->jsonSerialize());
+			$item['needed_quantity'] = $stock->getMinimumQuantity() - $stock->getQuantity();
+			$items[] = $item;
+		}
+		return $items;
+	}
+
+	/**
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function stockItemsForCabinet(Cabinet $cabinet): array {
+		$items = [];
+		foreach ($this->stockMapper->findByCabinet((int)$cabinet->getId()) as $stock) {
+			$items[] = $this->stockWithContainerPath($stock, $cabinet);
+		}
+		foreach ($this->slotMapper->findByCabinet((int)$cabinet->getId()) as $slot) {
+			foreach ($this->stockMapper->findBySlot((int)$slot->getId()) as $stock) {
+				$items[] = $this->stockWithContainerPath($stock, $cabinet, $slot);
+			}
+		}
+		return $items;
+	}
+
+	/**
+	 * @return array<string, mixed>
+	 */
+	private function stockWithContainerPath(StockItem $stock, Cabinet $cabinet, ?Slot $slot = null): array {
+		$item = $this->stockResponse($stock);
+		$item['cabinet_id'] = (int)$cabinet->getId();
+		$item['slot_id'] = $slot === null ? null : (int)$slot->getId();
+		$item['container_path'] = $cabinet->getName() . ($slot === null ? '' : ' / ' . $slot->getName());
+		$item['has_image'] = $this->hasItemImage((int)$stock->getId());
+		return $item;
 	}
 
 	public function createLocation(string $name, ?string $description): array {
@@ -156,6 +237,7 @@ class LagerService {
 			foreach ($this->cabinetMapper->findByLocation($id) as $cabinet) {
 				$this->deleteCabinetInTransaction((int)$cabinet->getId());
 			}
+			$this->deleteLocationImage($id);
 			$this->locationMapper->delete($location);
 			$this->db->commit();
 		} catch (\Throwable $e) {
@@ -199,6 +281,9 @@ class LagerService {
 
 	private function deleteCabinetInTransaction(int $id): void {
 		$cabinet = $this->cabinetMapper->find($id);
+		foreach ($this->stockMapper->findByCabinet($id) as $stock) {
+			$this->deleteStockInTransaction((int)$stock->getId());
+		}
 		foreach ($this->slotMapper->findByCabinet($id) as $slot) {
 			$this->deleteSlotInTransaction((int)$slot->getId());
 		}
@@ -246,54 +331,153 @@ class LagerService {
 		$this->slotMapper->delete($slot);
 	}
 
-	public function createStock(int $slotId, string $article, ?string $description, int $quantity, ?string $ean = null): array {
+	public function createStock(
+		int $slotId,
+		string $article,
+		?string $description,
+		int $quantity,
+		?string $ean = null,
+		?string $manufacturer = null,
+		array $tagNames = [],
+		int $minimumQuantity = 0,
+	): array {
 		$slot = $this->slotMapper->find($slotId);
+		return $this->createStockInContainer(
+			$slotId,
+			(int)$slot->getCabinetId(),
+			$article,
+			$description,
+			$quantity,
+			$ean,
+			$manufacturer,
+			$tagNames,
+			$minimumQuantity,
+		);
+	}
+
+	public function createStockInCabinet(
+		int $cabinetId,
+		string $article,
+		?string $description,
+		int $quantity,
+		?string $ean = null,
+		?string $manufacturer = null,
+		array $tagNames = [],
+		int $minimumQuantity = 0,
+	): array {
+		$this->cabinetMapper->find($cabinetId);
+		return $this->createStockInContainer(
+			null,
+			$cabinetId,
+			$article,
+			$description,
+			$quantity,
+			$ean,
+			$manufacturer,
+			$tagNames,
+			$minimumQuantity,
+		);
+	}
+
+	private function createStockInContainer(
+		?int $slotId,
+		int $cabinetId,
+		string $article,
+		?string $description,
+		int $quantity,
+		?string $ean,
+		?string $manufacturer,
+		array $tagNames,
+		int $minimumQuantity,
+	): array {
 		$article = $this->normalizeArticle($article);
 		$quantity = max(0, $quantity);
-		$existing = $this->stockMapper->findBySlotAndArticle($slotId, $article);
+		$minimumQuantity = max(0, $minimumQuantity);
+		$existing = $slotId === null
+			? $this->stockMapper->findByCabinetAndArticle($cabinetId, $article)
+			: $this->stockMapper->findBySlotAndArticle($slotId, $article);
 		if ($existing !== null) {
 			if ($quantity > 0) {
 				return $this->recordMovement($existing, 'in', $quantity, $this->l10n->t('Initial stock'))->jsonSerialize();
 			}
-			throw new \InvalidArgumentException($this->l10n->t('This article is already in the slot.'));
+			$message = $slotId === null
+				? $this->l10n->t('This article is already in this location.')
+				: $this->l10n->t('This article is already in the slot.');
+			throw new \InvalidArgumentException($message);
 		}
 		$stock = new StockItem();
 		$stock->setSlotId($slotId);
+		$stock->setCabinetId($cabinetId);
 		$stock->setArticle($article);
 		$stock->setDescription($this->normalizeDescription($description));
+		$stock->setManufacturer($this->normalizeManufacturer($manufacturer));
 		$stock->setQuantity(0);
+		$stock->setMinimumQuantity($minimumQuantity);
 		$ean = $this->normalizeEan($ean);
 		$this->assertEanAvailable($ean);
 		$stock->setEan($ean);
 		$stock->setCreatedAt(time());
 		$stock->setUpdatedAt(time());
 		$stock = $this->stockMapper->insert($stock);
-		if ($quantity > 0) {
-			return $this->recordMovement($stock, 'in', $quantity, $this->l10n->t('Initial stock'))->jsonSerialize();
+		if ($tagNames !== []) {
+			$this->setTagsForStockItem((int)$stock->getId(), $tagNames);
 		}
-		return $stock->jsonSerialize();
+		if ($quantity > 0) {
+			$stock = $this->recordMovement($stock, 'in', $quantity, $this->l10n->t('Initial stock'));
+		}
+		if ($stock->getQuantity() < $stock->getMinimumQuantity()) {
+			$this->webhookService->notifyLowStock($stock);
+		}
+		return $this->stockResponse($stock);
 	}
 
-	public function updateStock(int $id, ?string $article, ?string $description, ?string $ean = null): array {
+	public function updateStock(
+		int $id,
+		?string $article,
+		?string $description,
+		?string $ean = null,
+		?string $manufacturer = null,
+		?array $tagNames = null,
+		?int $minimumQuantity = null,
+	): array {
 		$stock = $this->stockMapper->find($id);
+		$wasBelowMinimum = $stock->getQuantity() < $stock->getMinimumQuantity();
 		if ($article !== null) {
 			$article = $this->normalizeArticle($article);
-			$existing = $this->stockMapper->findBySlotAndArticle((int)$stock->getSlotId(), $article);
+			$existing = $stock->getSlotId() === null
+				? $this->stockMapper->findByCabinetAndArticle((int)$stock->getCabinetId(), $article)
+				: $this->stockMapper->findBySlotAndArticle((int)$stock->getSlotId(), $article);
 			if ($existing !== null && (int)$existing->getId() !== (int)$stock->getId()) {
-				throw new \InvalidArgumentException($this->l10n->t('This article is already in the slot.'));
+				$message = $stock->getSlotId() === null
+					? $this->l10n->t('This article is already in this location.')
+					: $this->l10n->t('This article is already in the slot.');
+				throw new \InvalidArgumentException($message);
 			}
 			$stock->setArticle($article);
 		}
 		if ($description !== null) {
 			$stock->setDescription($this->normalizeDescription($description));
 		}
+		if ($manufacturer !== null) {
+			$stock->setManufacturer($this->normalizeManufacturer($manufacturer));
+		}
 		if ($ean !== null) {
 			$ean = $this->normalizeEan($ean);
 			$this->assertEanAvailable($ean, (int)$stock->getId());
 			$stock->setEan($ean);
 		}
+		if ($minimumQuantity !== null) {
+			$stock->setMinimumQuantity(max(0, $minimumQuantity));
+		}
 		$stock->setUpdatedAt(time());
-		return $this->stockMapper->update($stock)->jsonSerialize();
+		$stock = $this->stockMapper->update($stock);
+		if ($tagNames !== null) {
+			$this->setTagsForStockItem((int)$stock->getId(), $tagNames);
+		}
+		if (!$wasBelowMinimum && $stock->getQuantity() < $stock->getMinimumQuantity()) {
+			$this->webhookService->notifyLowStock($stock);
+		}
+		return $this->stockResponse($stock);
 	}
 
 	public function deleteStock(int $id): void {
@@ -312,8 +496,53 @@ class LagerService {
 		if ((int)$stock->getQuantity() > 0) {
 			throw new \InvalidArgumentException($this->l10n->t('Stock can only be deleted with a quantity of 0.'));
 		}
+		$this->tagMapper->deleteForStockItem((int)$stock->getId());
 		$this->deleteItemImage((int)$stock->getId());
 		$this->stockMapper->delete($stock);
+	}
+
+	/**
+	 * @return array<int, array{id: int, name: string}>
+	 */
+	public function getTags(): array {
+		return array_map(
+			static fn (Tag $tag): array => $tag->jsonSerialize(),
+			$this->tagMapper->findAll(),
+		);
+	}
+
+	public function createTag(string $name): array {
+		$name = $this->normalizeTagName($name);
+		if ($this->tagMapper->findByName($name) !== null) {
+			throw new \InvalidArgumentException($this->l10n->t('A tag with this name already exists.'));
+		}
+		$tag = new Tag();
+		$tag->setName($name);
+		return $this->tagMapper->insert($tag)->jsonSerialize();
+	}
+
+	public function updateTag(int $id, string $name): array {
+		$tag = $this->tagMapper->find($id);
+		$name = $this->normalizeTagName($name);
+		$existing = $this->tagMapper->findByName($name);
+		if ($existing !== null && (int)$existing->getId() !== $id) {
+			throw new \InvalidArgumentException($this->l10n->t('A tag with this name already exists.'));
+		}
+		$tag->setName($name);
+		return $this->tagMapper->update($tag)->jsonSerialize();
+	}
+
+	public function deleteTag(int $id): void {
+		$this->db->beginTransaction();
+		try {
+			$tag = $this->tagMapper->find($id);
+			$this->tagMapper->deleteForTag($id);
+			$this->tagMapper->delete($tag);
+			$this->db->commit();
+		} catch (\Throwable $e) {
+			$this->db->rollBack();
+			throw $e;
+		}
 	}
 
 	/**
@@ -321,7 +550,15 @@ class LagerService {
 	 */
 	public function saveItemImage(int $itemId, string $tmpPath): array {
 		$this->stockMapper->find($itemId);
+		return $this->saveImage('item_' . $itemId . '.jpg', $tmpPath);
+	}
 
+	public function saveLocationImage(int $locationId, string $tmpPath): array {
+		$this->locationMapper->find($locationId);
+		return $this->saveImage('location_' . $locationId . '.jpg', $tmpPath);
+	}
+
+	private function saveImage(string $name, string $tmpPath): array {
 		$maxSide = 1024;
 		$jpeg = null;
 		$src = @imagecreatefromstring((string)file_get_contents($tmpPath));
@@ -348,7 +585,6 @@ class LagerService {
 			throw new \InvalidArgumentException($this->l10n->t('Image is too large (max. 2 MB after compression).'));
 		}
 		$folder = $this->appData()->getFolder('/');
-		$name = 'item_' . $itemId . '.jpg';
 		if ($folder->fileExists($name)) {
 			$folder->getFile($name)->putContent($jpeg);
 		} else {
@@ -358,12 +594,7 @@ class LagerService {
 	}
 
 	public function getItemImage(int $itemId): ?string {
-		$folder = $this->appData()->getFolder('/');
-		$name = 'item_' . $itemId . '.jpg';
-		if (!$folder->fileExists($name)) {
-			return null;
-		}
-		return $folder->getFile($name)->getContent();
+		return $this->getImage('item_' . $itemId . '.jpg');
 	}
 
 	public function hasItemImage(int $itemId): bool {
@@ -371,8 +602,32 @@ class LagerService {
 	}
 
 	public function deleteItemImage(int $itemId): void {
+		$this->deleteImage('item_' . $itemId . '.jpg');
+	}
+
+	public function getLocationImage(int $locationId): ?string {
+		$this->locationMapper->find($locationId);
+		return $this->getImage('location_' . $locationId . '.jpg');
+	}
+
+	public function hasLocationImage(int $locationId): bool {
+		return $this->appData()->getFolder('/')->fileExists('location_' . $locationId . '.jpg');
+	}
+
+	public function deleteLocationImage(int $locationId): void {
+		$this->deleteImage('location_' . $locationId . '.jpg');
+	}
+
+	private function getImage(string $name): ?string {
 		$folder = $this->appData()->getFolder('/');
-		$name = 'item_' . $itemId . '.jpg';
+		if (!$folder->fileExists($name)) {
+			return null;
+		}
+		return $folder->getFile($name)->getContent();
+	}
+
+	private function deleteImage(string $name): void {
+		$folder = $this->appData()->getFolder('/');
 		if ($folder->fileExists($name)) {
 			$folder->getFile($name)->delete();
 		}
@@ -411,12 +666,15 @@ class LagerService {
 		$rows = $this->stockMapper->findByArticleLike($q);
 		$result = [];
 		foreach ($rows as $stock) {
-			$slot = $this->slotMapper->find((int)$stock->getSlotId());
-			$cabinet = $this->cabinetMapper->find((int)$slot->getCabinetId());
+			$slot = $stock->getSlotId() === null ? null : $this->slotMapper->find((int)$stock->getSlotId());
+			$cabinetId = $stock->getCabinetId() ?? $slot?->getCabinetId();
+			$cabinet = $this->cabinetMapper->find((int)$cabinetId);
 			$location = $this->locationMapper->find((int)$cabinet->getLocationId());
-			$stockArr = $stock->jsonSerialize();
-			$stockArr['slot_id'] = (int)$slot->getId();
-			$stockArr['slot_path'] = $location->getName() . ' / ' . $cabinet->getName() . ' / ' . $slot->getName();
+			$stockArr = $this->stockResponse($stock);
+			$stockArr['cabinet_id'] = (int)$cabinet->getId();
+			$stockArr['slot_id'] = $slot === null ? null : (int)$slot->getId();
+			$stockArr['slot_path'] = $location->getName() . ' / ' . $cabinet->getName()
+				. ($slot === null ? '' : ' / ' . $slot->getName());
 			$result[] = $stockArr;
 		}
 		return $result;
@@ -432,10 +690,12 @@ class LagerService {
 			throw new \InvalidArgumentException($this->l10n->t('Quantity must be greater than 0.'));
 		}
 		$now = time();
-		$slot = $this->slotMapper->find((int)$stock->getSlotId());
-		$cabinet = $this->cabinetMapper->find((int)$slot->getCabinetId());
+		$slot = $stock->getSlotId() === null ? null : $this->slotMapper->find((int)$stock->getSlotId());
+		$cabinetId = $stock->getCabinetId() ?? $slot?->getCabinetId();
+		$cabinet = $this->cabinetMapper->find((int)$cabinetId);
 		$location = $this->locationMapper->find((int)$cabinet->getLocationId());
 		$user = $this->userSession->getUser();
+		$previousQuantity = $stock->getQuantity();
 
 		$this->db->beginTransaction();
 		try {
@@ -444,11 +704,11 @@ class LagerService {
 			$note = $this->normalizeDescription($note);
 			$movement = new Movement();
 			$movement->setStockId((int)$stock->getId());
-			$movement->setSlotId((int)$slot->getId());
+			$movement->setSlotId($slot === null ? null : (int)$slot->getId());
 			$movement->setArticle($stock->getArticle());
 			$movement->setLocationName($location->getName());
 			$movement->setCabinetName($cabinet->getName());
-			$movement->setSlotName($slot->getName());
+			$movement->setSlotName($slot?->getName() ?? '');
 			$movement->setType($type);
 			$movement->setQuantity($quantity);
 			$movement->setNote($note);
@@ -457,6 +717,10 @@ class LagerService {
 			$this->movementMapper->insert($movement);
 
 			$this->db->commit();
+			if ($previousQuantity >= $stock->getMinimumQuantity()
+				&& $stock->getQuantity() < $stock->getMinimumQuantity()) {
+				$this->webhookService->notifyLowStock($stock);
+			}
 			return $stock;
 		} catch (\Throwable $e) {
 			$this->db->rollBack();
@@ -467,7 +731,7 @@ class LagerService {
 	private function updateStockQuantityAtomically(int $stockId, string $type, int $quantity, int $updatedAt): StockItem {
 		$qb = $this->db->getQueryBuilder();
 		$adjustment = $type === 'in' ? $quantity : -$quantity;
-		$qb->update('lager_stock')
+		$qb->update('kuechenlager_stock')
 			->set('quantity', $qb->createFunction('quantity + ' . $qb->createNamedParameter($adjustment, IQueryBuilder::PARAM_INT)))
 			->set('updated_at', $qb->createNamedParameter($updatedAt, IQueryBuilder::PARAM_INT))
 			->where($qb->expr()->eq('id', $qb->createNamedParameter($stockId, IQueryBuilder::PARAM_INT)));
@@ -508,19 +772,55 @@ class LagerService {
 	}
 
 	private function stockToSearchResult(array $stock): array {
-		$slotId = (int)$stock['slot_id'];
-		$slot = $this->slotMapper->find($slotId);
-		$cabinet = $this->cabinetMapper->find((int)$slot->getCabinetId());
+		$slotId = $stock['slot_id'] === null ? null : (int)$stock['slot_id'];
+		$slot = $slotId === null ? null : $this->slotMapper->find($slotId);
+		$cabinetId = $stock['cabinet_id'] ?? $slot?->getCabinetId();
+		$cabinet = $this->cabinetMapper->find((int)$cabinetId);
 		$location = $this->locationMapper->find((int)$cabinet->getLocationId());
 		return [
 			'id' => (int)$stock['id'],
 			'article' => $stock['article'],
 			'description' => $stock['description'] ?? null,
+			'notes' => $stock['description'] ?? null,
+			'manufacturer' => $stock['manufacturer'] ?? null,
+			'minimum_quantity' => (int)($stock['minimum_quantity'] ?? 0),
+			'tags' => array_map(
+				static fn (Tag $tag): array => $tag->jsonSerialize(),
+				$this->tagMapper->findByStockItem((int)$stock['id']),
+			),
 			'quantity' => (int)$stock['quantity'],
 			'ean' => $stock['ean'] ?? null,
 			'slot_id' => $slotId,
-			'slot_path' => $location->getName() . ' / ' . $cabinet->getName() . ' / ' . $slot->getName(),
+			'cabinet_id' => (int)$cabinet->getId(),
+			'slot_path' => $location->getName() . ' / ' . $cabinet->getName()
+				. ($slot === null ? '' : ' / ' . $slot->getName()),
 		];
+	}
+
+	private function stockResponse(StockItem $stock): array {
+		$result = $stock->jsonSerialize();
+		$result['tags'] = array_map(
+			static fn (Tag $tag): array => $tag->jsonSerialize(),
+			$this->tagMapper->findByStockItem((int)$stock->getId()),
+		);
+		return $result;
+	}
+
+	/**
+	 * @param string[] $names
+	 */
+	private function setTagsForStockItem(int $stockId, array $names): void {
+		$names = $this->normalizeTagNames($names);
+		$this->db->beginTransaction();
+		try {
+			$tags = $this->tagMapper->findOrCreateByNames($names);
+			$tagIds = array_map(static fn (Tag $tag): int => (int)$tag->getId(), $tags);
+			$this->tagMapper->setForStockItem($stockId, $tagIds);
+			$this->db->commit();
+		} catch (\Throwable $e) {
+			$this->db->rollBack();
+			throw $e;
+		}
 	}
 
 	private function normalizeEan(?string $value): ?string {
@@ -575,6 +875,48 @@ class LagerService {
 			throw new \InvalidArgumentException($this->l10n->t('Description is too long.'));
 		}
 		return $value;
+	}
+
+	private function normalizeManufacturer(?string $value): ?string {
+		if ($value === null) {
+			return null;
+		}
+		$value = trim($value);
+		if ($value === '') {
+			return null;
+		}
+		if (mb_strlen($value) > 255) {
+			throw new \InvalidArgumentException($this->l10n->t('Manufacturer is too long.'));
+		}
+		return $value;
+	}
+
+	private function normalizeTagName(string $value): string {
+		$value = trim($value);
+		if ($value === '' || mb_strlen($value) > 64) {
+			throw new \InvalidArgumentException($this->l10n->t('Tag name is invalid.'));
+		}
+		return $value;
+	}
+
+	/**
+	 * @param string[] $names
+	 * @return string[]
+	 */
+	private function normalizeTagNames(array $names): array {
+		if (count($names) > 20) {
+			throw new \InvalidArgumentException($this->l10n->t('No more than 20 tags can be assigned to an article.'));
+		}
+		$normalized = [];
+		foreach ($names as $name) {
+			if (!is_string($name)) {
+				throw new \InvalidArgumentException($this->l10n->t('Tag name is invalid.'));
+			}
+			$name = $this->normalizeTagName($name);
+			$key = mb_strtolower($name);
+			$normalized[$key] = $name;
+		}
+		return array_values($normalized);
 	}
 
 	private function locationNameExists(string $name, ?int $exceptId = null): bool {

@@ -85,6 +85,21 @@
 	color: var(--color-main-text, #222);
 }
 
+@media (max-width: 760px) {
+	.search-box {
+		flex: 1 1 100%;
+		flex-wrap: wrap;
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.search-box input[type="search"] {
+		flex: 1 1 260px;
+		min-width: min(260px, 100%);
+		max-width: 100%;
+	}
+}
+
 .search-results {
 	position: absolute;
 	top: 42px;
@@ -122,22 +137,43 @@
 	opacity: .75;
 }
 
+.search-result .metadata,
+.stock-table .item-meta {
+	font-size: 12px;
+	color: var(--color-text-maxcontrast, #666);
+}
+
+.stock-table .stock-manufacturer {
+	font-size: 13px;
+}
+
 .lager-layout {
 	flex: 1;
 	display: flex;
 	min-height: 0;
+	position: relative;
 }
 
 .tree-pane {
-	width: 40%;
-	min-width: 300px;
-	max-width: 520px;
+	flex: 0 0 260px;
+	width: 260px;
+	min-width: 220px;
+	max-width: 320px;
 	border-right: 1px solid var(--color-border, #ccc);
 	display: flex;
 	flex-direction: column;
+	overflow: hidden;
+}
+
+.lager-layout.sidebar-collapsed .tree-pane {
+	display: none;
 }
 
 .pane-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 	padding: 10px 12px;
 	border-bottom: 1px solid var(--color-border, #eee);
 }
@@ -158,10 +194,6 @@
 	list-style: none;
 	margin: 0;
 	padding-left: 18px;
-	display: none;
-}
-
-.tree ul.open {
 	display: block;
 }
 
@@ -181,13 +213,6 @@
 .tree-row.selected {
 	background-color: var(--color-background-hover, #f0f0f0);
 	font-weight: 600;
-}
-
-.tree-row .caret {
-	width: 12px;
-	display: inline-block;
-	font-size: 11px;
-	opacity: .7;
 }
 
 .tree-row .tree-label {
@@ -230,8 +255,83 @@
 
 .detail-pane {
 	flex: 1;
+	min-width: 0;
 	overflow-y: auto;
 	padding: 14px 18px;
+}
+
+.detail-toolbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+#lager-toggle-locations-btn {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	padding: 7px;
+}
+
+#lager-toggle-locations-pane-btn {
+	display: none;
+	flex: 0 0 auto;
+	width: 36px;
+	height: 36px;
+	padding: 7px;
+}
+
+.sidebar-toggle-icon {
+	width: 20px;
+	height: 20px;
+	filter: var(--background-invert-if-dark, none);
+}
+
+@media (max-width: 760px) {
+	.lager-layout {
+		min-width: 0;
+	}
+
+	.tree-pane {
+		display: none;
+		position: absolute;
+		inset: 0 auto 0 0;
+		z-index: 20;
+		width: min(280px, 85vw);
+		min-width: 0;
+		max-width: 85vw;
+		background: var(--color-main-background, #fff);
+		box-shadow: 0 2px 12px rgba(0, 0, 0, .25);
+	}
+
+	.lager-layout.mobile-sidebar-open .tree-pane {
+		display: flex;
+	}
+
+	.lager-layout.mobile-sidebar-open #lager-toggle-locations-btn {
+		display: none;
+	}
+
+	.lager-layout.mobile-sidebar-open #lager-toggle-locations-pane-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.detail-pane {
+		width: 100%;
+		padding: 12px;
+	}
+}
+
+.detail-toolbar [role="status"] {
+	color: var(--color-text-maxcontrast, #777);
+	font-size: 13px;
 }
 
 .detail-empty,
@@ -327,6 +427,14 @@
 	max-height: 86vh;
 	overflow-y: auto;
 	padding: 18px 20px;
+}
+
+.shopping-list-modal {
+	width: min(760px, 94vw);
+}
+
+.shopping-list-content {
+	overflow-x: auto;
 }
 
 .modal h3 {
@@ -591,24 +699,32 @@
 .scan-notfound { font-size: 15px; margin-top: 4px; }
 .scan-result-actions { display: flex; gap: 8px; margin-top: 12px; }
 
-/* Dezenter Spenden-Link unten rechts */
-.lager-donate {
-	position: fixed;
-	right: 16px;
-	bottom: 10px;
-	z-index: 100;
-	padding: 3px 10px;
+.lager-footer {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 8px 18px;
+	padding: 8px 16px;
+	border-top: 1px solid var(--color-border, #ccc);
 	font-size: 12px;
-	line-height: 1.6;
-	color: var(--color-text, var(--color-main-text, inherit));
-	background: var(--color-background-hover, rgba(0, 0, 0, 0.06));
-	border: 1px solid var(--color-border, transparent);
-	border-radius: 12px;
-	text-decoration: none;
-	opacity: 0.55;
-	transition: opacity 0.2s ease;
+	color: var(--color-text-maxcontrast, #666);
 }
-.lager-donate:hover { opacity: 1; }
+
+.tag-manager-list {
+	display: grid;
+	gap: 8px;
+	margin: 12px 0;
+}
+
+.tag-manager-row {
+	display: flex;
+	gap: 8px;
+}
+
+.tag-manager-row input {
+	flex: 1;
+	min-width: 0;
+}
 
 /* QR Display */
 .qr-display {
@@ -650,6 +766,25 @@
 	margin-right: 8px;
 	vertical-align: middle;
 	border: 1px solid var(--color-border, #ddd);
+}
+
+.location-thumb {
+	width: 28px;
+	height: 28px;
+	object-fit: cover;
+	border-radius: 4px;
+	margin-right: 8px;
+	vertical-align: middle;
+	border: 1px solid var(--color-border, #ddd);
+	cursor: pointer;
+}
+
+.location-photo-large {
+	display: block;
+	max-width: 100%;
+	max-height: 70vh;
+	margin: 0 auto;
+	border-radius: 4px;
 }
 
 /* EAN column in stock table */
@@ -697,4 +832,3 @@
 	display: block;
 	margin: 0 auto;
 }
-

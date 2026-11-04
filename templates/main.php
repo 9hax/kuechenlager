@@ -5,25 +5,27 @@ declare(strict_types=1);
 use OCP\Util;
 
 /** @var \OCP\IL10N\IL10N $l */
-$l = Util::getL10N('lager');
+$l = Util::getL10N('kuechenlager');
 
-Util::addScript('lager', 'qrcode-generator.min');
-Util::addScript('lager', 'zxing');
-Util::addScript('lager', 'jsqr');
-Util::addScript('lager', 'html5qrcode.min');
-Util::addScript('lager', 'lager');
-Util::addStyle('lager', 'lager');
+Util::addScript('kuechenlager', 'qrcode-generator.min');
+Util::addScript('kuechenlager', 'zxing');
+Util::addScript('kuechenlager', 'jsqr');
+Util::addScript('kuechenlager', 'html5qrcode.min');
+Util::addScript('kuechenlager', 'lager');
+Util::addStyle('kuechenlager', 'lager');
 ?>
-<div id="app-content" class="app-lager" data-is-admin="<?php p($_['isAdmin'] ? '1' : '0'); ?>">
+<div id="app-content" class="app-lager">
 	<header class="lager-header">
 		<h1>
-			<img class="app-icon" src="<?php p(image_path('lager', 'app-dark.svg')); ?>" alt=""/>
-			<?php p($l->t('Warehouse')); ?>
+			<img class="app-icon" src="<?php p(image_path('kuechenlager', 'app-dark.svg')); ?>" alt=""/>
+			<?php p($l->t('Kitchen inventory')); ?>
 		</h1>
 		<div class="search-box">
 			<button id="lager-scan-btn" class="btn" type="button" title="<?php p($l->t('Scan barcode/QR')); ?>">&#128247; <?php p($l->t('Scan')); ?></button>
 			<input type="search" id="lager-search" placeholder="<?php p($l->t('Search article or EAN …')); ?>" autocomplete="off"/>
 			<div id="lager-search-results" class="search-results hidden"></div>
+			<button id="lager-tags-btn" class="btn" type="button"><?php p($l->t('Manage tags')); ?></button>
+			<button id="lager-shopping-list-btn" class="btn" type="button"><?php p($l->t('Shopping list')); ?></button>
 			<button id="lager-history-btn" class="btn primary" type="button"><?php p($l->t('History')); ?></button>
 		</div>
 	</header>
@@ -32,17 +34,23 @@ Util::addStyle('lager', 'lager');
 		<section class="tree-pane">
 			<div class="pane-toolbar">
 				<button id="lager-add-location-btn" class="btn primary" type="button"><?php p($l->t('+ Location')); ?></button>
+				<button id="lager-toggle-locations-pane-btn" class="btn sidebar-toggle mobile-sidebar-close" type="button" aria-expanded="true" aria-label="<?php p($l->t('Hide locations')); ?>" title="<?php p($l->t('Hide locations')); ?>">
+					<img class="sidebar-toggle-icon" src="<?php p(image_path('core', 'actions/toggle-filelist.svg')); ?>" alt="" aria-hidden="true"/>
+				</button>
 			</div>
 			<ul id="lager-tree" class="tree"></ul>
-			<div id="lager-tree-empty" class="pane-empty hidden">
-				<?php p($l->t('No locations created yet.')); ?>
-			</div>
+			<div id="lager-tree-empty" class="pane-empty hidden"></div>
 		</section>
 
 		<section class="detail-pane">
-			<div id="lager-detail" class="detail-empty">
-				<?php p($l->t('No slot selected.')); ?>
+			<div class="detail-toolbar">
+				<button id="lager-toggle-locations-btn" class="btn sidebar-toggle" type="button" aria-expanded="true" aria-label="<?php p($l->t('Hide locations')); ?>" title="<?php p($l->t('Hide locations')); ?>">
+					<img class="sidebar-toggle-icon" src="<?php p(image_path('core', 'actions/toggle-filelist.svg')); ?>" alt="" aria-hidden="true"/>
+				</button>
+				<button id="lager-add-article-btn" class="btn primary" type="button" disabled><?php p($l->t('+ Add article')); ?></button>
+				<span id="lager-add-article-hint" role="status"><?php p($l->t('Select a location.')); ?></span>
 			</div>
+			<div id="lager-detail" class="detail-empty"></div>
 		</section>
 	</div>
 
@@ -81,5 +89,8 @@ Util::addStyle('lager', 'lager');
 		</div>
 	</div>
 
-	<a id="lager-donate-btn" class="lager-donate" href="https://paypal.me/ToniWenig" target="_blank" rel="noopener noreferrer" title="<?php p($l->t('Support the app with a donation')); ?>">&#128179; <?php p($l->t('Donate')); ?></a>
+	<footer class="lager-footer">
+		<span><?php p($l->t('Based on')); ?> <a href="https://github.com/wenigdigital/lager" target="_blank" rel="noopener noreferrer">wenigdigital/lager</a>.</span>
+		<a id="lager-donate-btn" href="https://paypal.me/ToniWenig" target="_blank" rel="noopener noreferrer"><?php p($l->t('Donate to the original project here.')); ?></a>
+	</footer>
 </div>

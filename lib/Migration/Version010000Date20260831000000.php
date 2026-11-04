@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Migration;
+namespace OCA\Kuechenlager\Migration;
 
 use Closure;
 use OCP\DB\ISchemaWrapper;
@@ -21,8 +21,8 @@ class Version010000Date20260831000000 extends SimpleMigrationStep {
 		$schema = $schemaClosure();
 
 		// Force create table for testing
-		if (!$schema->hasTable('lager_locations')) {
-			$table = $schema->createTable('lager_locations');
+		if (!$schema->hasTable('kuechenlager_locations')) {
+			$table = $schema->createTable('kuechenlager_locations');
 			$table->addColumn('id', Types::BIGINT, [
 				'autoincrement' => true,
 				'notnull' => true,
@@ -40,11 +40,11 @@ class Version010000Date20260831000000 extends SimpleMigrationStep {
 				'default' => 0,
 			]);
 			$table->setPrimaryKey(['id']);
-			$table->addUniqueIndex(['name'], 'lager_loc_name');
+			$table->addUniqueIndex(['name'], 'kuechenlager_loc_name');
 		}
 
-		if (!$schema->hasTable('lager_cabinets')) {
-			$table = $schema->createTable('lager_cabinets');
+		if (!$schema->hasTable('kuechenlager_cabinets')) {
+			$table = $schema->createTable('kuechenlager_cabinets');
 			$table->addColumn('id', Types::BIGINT, [
 				'autoincrement' => true,
 				'notnull' => true,
@@ -66,11 +66,11 @@ class Version010000Date20260831000000 extends SimpleMigrationStep {
 				'default' => 0,
 			]);
 			$table->setPrimaryKey(['id']);
-			$table->addIndex(['location_id'], 'lager_cab_loc');
+			$table->addIndex(['location_id'], 'kuechenlager_cab_loc');
 		}
 
-		if (!$schema->hasTable('lager_slots')) {
-			$table = $schema->createTable('lager_slots');
+		if (!$schema->hasTable('kuechenlager_slots')) {
+			$table = $schema->createTable('kuechenlager_slots');
 			$table->addColumn('id', Types::BIGINT, [
 				'autoincrement' => true,
 				'notnull' => true,
@@ -92,11 +92,11 @@ class Version010000Date20260831000000 extends SimpleMigrationStep {
 				'default' => 0,
 			]);
 			$table->setPrimaryKey(['id']);
-			$table->addIndex(['cabinet_id'], 'lager_slot_cab');
+			$table->addIndex(['cabinet_id'], 'kuechenlager_slot_cab');
 		}
 
-		if (!$schema->hasTable('lager_stock')) {
-			$table = $schema->createTable('lager_stock');
+		if (!$schema->hasTable('kuechenlager_stock')) {
+			$table = $schema->createTable('kuechenlager_stock');
 			$table->addColumn('id', Types::BIGINT, [
 				'autoincrement' => true,
 				'notnull' => true,
@@ -126,11 +126,11 @@ class Version010000Date20260831000000 extends SimpleMigrationStep {
 				'default' => 0,
 			]);
 			$table->setPrimaryKey(['id']);
-			$table->addIndex(['slot_id'], 'lager_stock_slot');
+			$table->addIndex(['slot_id'], 'kuechenlager_stock_slot');
 		}
 
-		if (!$schema->hasTable('lager_movements')) {
-			$table = $schema->createTable('lager_movements');
+		if (!$schema->hasTable('kuechenlager_movements')) {
+			$table = $schema->createTable('kuechenlager_movements');
 			$table->addColumn('id', Types::BIGINT, [
 				'autoincrement' => true,
 				'notnull' => true,
@@ -183,8 +183,8 @@ class Version010000Date20260831000000 extends SimpleMigrationStep {
 				'default' => 0,
 			]);
 			$table->setPrimaryKey(['id']);
-			$table->addIndex(['created_at'], 'lager_move_time');
-			$table->addIndex(['slot_id'], 'lager_move_slot');
+			$table->addIndex(['created_at'], 'kuechenlager_move_time');
+			$table->addIndex(['slot_id'], 'kuechenlager_move_slot');
 		}
 
 		return $schema;

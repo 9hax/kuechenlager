@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\AppInfo;
+namespace OCA\Kuechenlager\AppInfo;
 
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
@@ -10,7 +10,7 @@ use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 
 class Application extends App implements IBootstrap {
-	public const APP_ID = 'lager';
+	public const APP_ID = 'kuechenlager';
 
 	public function __construct(array $urlParams = []) {
 		parent::__construct(self::APP_ID, $urlParams);

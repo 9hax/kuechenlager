@@ -2,19 +2,22 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Tests;
+namespace OCA\Kuechenlager\Tests;
 
-use OCA\Lager\Db\Cabinet;
-use OCA\Lager\Db\CabinetMapper;
-use OCA\Lager\Db\Location;
-use OCA\Lager\Db\LocationMapper;
-use OCA\Lager\Db\Movement;
-use OCA\Lager\Db\MovementMapper;
-use OCA\Lager\Db\Slot;
-use OCA\Lager\Db\SlotMapper;
-use OCA\Lager\Db\StockItem;
-use OCA\Lager\Db\StockItemMapper;
-use OCA\Lager\Service\LagerService;
+use OCA\Kuechenlager\Db\Cabinet;
+use OCA\Kuechenlager\Db\CabinetMapper;
+use OCA\Kuechenlager\Db\Location;
+use OCA\Kuechenlager\Db\LocationMapper;
+use OCA\Kuechenlager\Db\Movement;
+use OCA\Kuechenlager\Db\MovementMapper;
+use OCA\Kuechenlager\Db\Slot;
+use OCA\Kuechenlager\Db\SlotMapper;
+use OCA\Kuechenlager\Db\StockItem;
+use OCA\Kuechenlager\Db\StockItemMapper;
+use OCA\Kuechenlager\Db\Tag;
+use OCA\Kuechenlager\Db\TagMapper;
+use OCA\Kuechenlager\Service\LagerService;
+use OCA\Kuechenlager\Service\WebhookService;
 use OCP\DB\QueryBuilder\IExpressionBuilder;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\Files\AppData\IAppDataFactory;
@@ -34,9 +37,11 @@ final class LagerServiceTest extends TestCase {
 	private CabinetMapper&MockObject $cabinetMapper;
 	private SlotMapper&MockObject $slotMapper;
 	private StockItemMapper&MockObject $stockMapper;
+	private TagMapper&MockObject $tagMapper;
 	private MovementMapper&MockObject $movementMapper;
 	private IUserSession&MockObject $userSession;
 	private IAppDataFactory&MockObject $appDataFactory;
+	private WebhookService&MockObject $webhookService;
 	private LagerService $service;
 
 	protected function setUp(): void {
@@ -45,6 +50,7 @@ final class LagerServiceTest extends TestCase {
 		$this->cabinetMapper = $this->createMock(CabinetMapper::class);
 		$this->slotMapper = $this->createMock(SlotMapper::class);
 		$this->stockMapper = $this->createMock(StockItemMapper::class);
+		$this->tagMapper = $this->createMock(TagMapper::class);
 		$this->movementMapper = $this->createMock(MovementMapper::class);
 		$this->userSession = $this->createMock(IUserSession::class);
 		$l10n = $this->createMock(IL10N::class);
@@ -54,6 +60,7 @@ final class LagerServiceTest extends TestCase {
 				: vsprintf($text, $parameters),
 		);
 		$this->appDataFactory = $this->createMock(IAppDataFactory::class);
+		$this->webhookService = $this->createMock(WebhookService::class);
 
 		$this->service = new LagerService(
 			$this->db,
@@ -65,6 +72,8 @@ final class LagerServiceTest extends TestCase {
 			$this->userSession,
 			$l10n,
 			$this->appDataFactory,
+			$this->tagMapper,
+			$this->webhookService,
 		);
 	}
 
@@ -86,19 +95,57 @@ final class LagerServiceTest extends TestCase {
 		$anotherStock = new StockItem();
 		$anotherStock->setSlotId(3);
 		$anotherStock->setQuantity(6);
+		$cabinetStock = new StockItem();
+		$cabinetStock->setCabinetId(2);
+		$cabinetStock->setQuantity(5);
 
 		$this->locationMapper->method('findAll')->willReturn([$location]);
 		$this->cabinetMapper->method('findAll')->willReturn([$cabinet]);
 		$this->slotMapper->method('findAll')->willReturn([$slot]);
-		$this->stockMapper->method('findAll')->willReturn([$stock, $anotherStock]);
+		$this->stockMapper->method('findAll')->willReturn([$stock, $anotherStock, $cabinetStock]);
+		$folder = $this->createMock(ISimpleFolder::class);
+		$folder->method('fileExists')->willReturn(false);
+		$appData = $this->createMock(IAppData::class);
+		$appData->method('getFolder')->willReturn($folder);
+		$this->appDataFactory->method('get')->willReturn($appData);
 
 		$tree = $this->service->getTree();
 
 		self::assertSame('Kitchen', $tree[0]['name']);
-		self::assertSame(10, $tree[0]['total_qty']);
+		self::assertSame(15, $tree[0]['total_qty']);
 		self::assertSame('Pantry', $tree[0]['cabinets'][0]['name']);
-		self::assertSame(10, $tree[0]['cabinets'][0]['total_qty']);
+		self::assertSame(15, $tree[0]['cabinets'][0]['total_qty']);
 		self::assertSame(10, $tree[0]['cabinets'][0]['slots'][0]['total_qty']);
+	}
+
+	public function testShoppingListContainsOnlyItemsBelowMinimumWithNeededQuantityAndLocation(): void {
+		$lowStock = $this->stockItem(8, null, 'Oats', 1);
+		$lowStock->setCabinetId(2);
+		$lowStock->setMinimumQuantity(4);
+		$atMinimum = $this->stockItem(9, null, 'Tea', 2);
+		$atMinimum->setCabinetId(2);
+		$atMinimum->setMinimumQuantity(2);
+		$this->stockMapper->expects(self::once())
+			->method('findAll')
+			->willReturn([$lowStock, $atMinimum]);
+		$cabinet = new Cabinet();
+		$cabinet->setId(2);
+		$cabinet->setLocationId(1);
+		$cabinet->setName('Pantry');
+		$this->cabinetMapper->expects(self::once())->method('find')->with(2)->willReturn($cabinet);
+		$location = new Location();
+		$location->setName('Kitchen');
+		$this->locationMapper->expects(self::once())->method('find')->with(1)->willReturn($location);
+		$this->tagMapper->expects(self::once())->method('findByStockItem')->with(8)->willReturn([]);
+
+		$result = $this->service->getShoppingList();
+
+		self::assertCount(1, $result);
+		self::assertSame('Oats', $result[0]['article']);
+		self::assertSame(1, $result[0]['quantity']);
+		self::assertSame(4, $result[0]['minimum_quantity']);
+		self::assertSame(3, $result[0]['needed_quantity']);
+		self::assertSame('Kitchen / Pantry', $result[0]['slot_path']);
 	}
 
 	public function testTreeIncludesEmptyBranchesWithZeroTotals(): void {
@@ -109,6 +156,11 @@ final class LagerServiceTest extends TestCase {
 		$this->cabinetMapper->method('findAll')->willReturn([]);
 		$this->slotMapper->method('findAll')->willReturn([]);
 		$this->stockMapper->method('findAll')->willReturn([]);
+		$folder = $this->createMock(ISimpleFolder::class);
+		$folder->method('fileExists')->with('location_1.jpg')->willReturn(false);
+		$appData = $this->createMock(IAppData::class);
+		$appData->method('getFolder')->with('/')->willReturn($folder);
+		$this->appDataFactory->method('get')->willReturn($appData);
 
 		self::assertSame([[
 			'id' => 1,
@@ -117,6 +169,7 @@ final class LagerServiceTest extends TestCase {
 			'created_at' => 0,
 			'cabinets' => [],
 			'total_qty' => 0,
+			'has_image' => false,
 		]], $this->service->getTree());
 	}
 
@@ -242,7 +295,142 @@ final class LagerServiceTest extends TestCase {
 
 		self::assertFalse($items[0]['has_image']);
 		self::assertTrue($items[1]['has_image']);
-		self::assertSame('Oats', $items[0]['article']);
+	}
+
+	public function testGetStockByLocationIncludesCabinetAndSlotArticlesWithContainerPaths(): void {
+		$location = new Location();
+		$location->setId(1);
+		$location->setName('Kitchen');
+		$cabinet = new Cabinet();
+		$cabinet->setId(2);
+		$cabinet->setLocationId(1);
+		$cabinet->setName('Pantry');
+		$slot = new Slot();
+		$slot->setId(3);
+		$slot->setCabinetId(2);
+		$slot->setName('Shelf A');
+		$direct = $this->stockItem(8, 0, 'Tea', 1);
+		$direct->setSlotId(null);
+		$direct->setCabinetId(2);
+		$slotted = $this->stockItem(9, 3, 'Oats', 2);
+		$this->locationMapper->expects(self::once())->method('find')->with(1)->willReturn($location);
+		$this->cabinetMapper->expects(self::once())->method('findByLocation')->with(1)->willReturn([$cabinet]);
+		$this->cabinetMapper->expects(self::never())->method('find');
+		$this->slotMapper->expects(self::once())->method('findByCabinet')->with(2)->willReturn([$slot]);
+		$this->stockMapper->expects(self::once())->method('findByCabinet')->with(2)->willReturn([$direct]);
+		$this->stockMapper->expects(self::once())->method('findBySlot')->with(3)->willReturn([$slotted]);
+		$this->tagMapper->method('findByStockItem')->willReturn([]);
+		$folder = $this->createMock(ISimpleFolder::class);
+		$folder->method('fileExists')->willReturn(false);
+		$appData = $this->createMock(IAppData::class);
+		$appData->method('getFolder')->willReturn($folder);
+		$this->appDataFactory->method('get')->willReturn($appData);
+
+		$result = $this->service->getStockByLocation(1);
+
+		self::assertSame('Kitchen', $result['location']['name']);
+		self::assertSame(['Tea', 'Oats'], array_column($result['items'], 'article'));
+		self::assertSame('Pantry', $result['items'][0]['container_path']);
+		self::assertNull($result['items'][0]['slot_id']);
+		self::assertSame('Pantry / Shelf A', $result['items'][1]['container_path']);
+		self::assertSame(2, $result['items'][1]['cabinet_id']);
+	}
+
+	public function testCreateStockCanBeStoredDirectlyInCabinet(): void {
+		$cabinet = new Cabinet();
+		$cabinet->setId(2);
+		$this->cabinetMapper->expects(self::once())->method('find')->with(2)->willReturn($cabinet);
+		$this->stockMapper->expects(self::once())
+			->method('findByCabinetAndArticle')
+			->with(2, 'Tea')
+			->willReturn(null);
+		$this->stockMapper->expects(self::once())
+			->method('insert')
+			->with(self::callback(static function (StockItem $stock): bool {
+				$stock->setId(8);
+				return $stock->getCabinetId() === 2
+					&& $stock->getSlotId() === null
+					&& $stock->getArticle() === 'Tea';
+			}))
+			->willReturnCallback(static function (StockItem $stock): StockItem {
+				$stock->setId(8);
+				return $stock;
+			});
+		$this->tagMapper->expects(self::once())->method('findByStockItem')->with(8)->willReturn([]);
+
+		$item = $this->service->createStockInCabinet(2, 'Tea', null, 0);
+
+		self::assertSame(2, $item['cabinet_id']);
+		self::assertNull($item['slot_id']);
+		self::assertSame('Tea', $item['article']);
+	}
+
+	public function testCreateStockSavesMinimumQuantity(): void {
+		$slot = new Slot();
+		$slot->setId(3);
+		$this->slotMapper->expects(self::once())->method('find')->with(3)->willReturn($slot);
+		$this->stockMapper->expects(self::once())->method('findBySlotAndArticle')->with(3, 'Tea')->willReturn(null);
+		$this->stockMapper->expects(self::once())
+			->method('insert')
+			->willReturnCallback(static function (StockItem $item): StockItem {
+				$item->setId(8);
+				return $item;
+			});
+		$this->webhookService->expects(self::once())
+			->method('notifyLowStock')
+			->with(self::callback(static fn (StockItem $item): bool => $item->getQuantity() === 0 && $item->getMinimumQuantity() === 2));
+		$this->tagMapper->method('findByStockItem')->willReturn([]);
+
+		$result = $this->service->createStock(3, 'Tea', null, 0, null, null, [], 2);
+
+		self::assertSame(2, $result['minimum_quantity']);
+	}
+
+	public function testUpdatingMinimumQuantityCanTriggerLowStockWebhookOnce(): void {
+		$stock = $this->stockItem(8, 3, 'Tea', 1);
+		$this->stockMapper->expects(self::once())->method('find')->with(8)->willReturn($stock);
+		$this->stockMapper->expects(self::once())->method('update')->willReturnArgument(0);
+		$this->webhookService->expects(self::once())
+			->method('notifyLowStock')
+			->with(self::callback(static fn (StockItem $item): bool => $item->getMinimumQuantity() === 2 && $item->getQuantity() === 1));
+		$this->tagMapper->method('findByStockItem')->willReturn([]);
+
+		$result = $this->service->updateStock(8, null, null, null, null, null, 2);
+
+		self::assertSame(2, $result['minimum_quantity']);
+	}
+
+	public function testStockWithdrawalSendsWebhookOnlyWhenCrossingBelowMinimum(): void {
+		$before = $this->stockItem(9, 3, 'Green tea', 3);
+		$before->setMinimumQuantity(2);
+		$after = $this->stockItem(9, 3, 'Green tea', 1);
+		$after->setMinimumQuantity(2);
+		$slot = new Slot();
+		$slot->setId(3);
+		$slot->setCabinetId(2);
+		$cabinet = new Cabinet();
+		$cabinet->setId(2);
+		$cabinet->setLocationId(1);
+		$location = new Location();
+		$this->userSession->method('getUser')->willReturn(null);
+		$this->stockMapper->expects(self::exactly(2))
+			->method('find')
+			->with(9)
+			->willReturnOnConsecutiveCalls($before, $after);
+		$this->slotMapper->method('find')->with(3)->willReturn($slot);
+		$this->cabinetMapper->method('find')->with(2)->willReturn($cabinet);
+		$this->locationMapper->method('find')->with(1)->willReturn($location);
+		$this->db->expects(self::once())->method('beginTransaction');
+		$this->db->expects(self::once())->method('commit');
+		$this->configureMovementQueryBuilder(1);
+		$this->movementMapper->expects(self::once())->method('insert')->willReturnArgument(0);
+		$this->webhookService->expects(self::once())
+			->method('notifyLowStock')
+			->with(self::identicalTo($after));
+
+		$result = $this->service->moveStock(9, 'out', 2, null);
+
+		self::assertSame(1, $result['quantity']);
 	}
 
 	public function testCreateCabinetAndSlotNormalizeNamesAndDescriptions(): void {
@@ -348,10 +536,15 @@ final class LagerServiceTest extends TestCase {
 		$slot->setId(3);
 		$stock = $this->stockItem(8, 3, 'Oats', 0);
 		$folder = $this->createMock(ISimpleFolder::class);
-		$folder->expects(self::once())->method('fileExists')->with('item_8.jpg')->willReturn(false);
+		$folder->expects(self::exactly(2))
+			->method('fileExists')
+			->willReturnCallback(static fn (string $name): bool => match ($name) {
+				'item_8.jpg', 'location_1.jpg' => false,
+				default => throw new \LogicException('Unexpected image name: ' . $name),
+			});
 		$appData = $this->createMock(IAppData::class);
-		$appData->expects(self::once())->method('getFolder')->with('/')->willReturn($folder);
-		$this->appDataFactory->expects(self::once())->method('get')->willReturn($appData);
+		$appData->expects(self::exactly(2))->method('getFolder')->with('/')->willReturn($folder);
+		$this->appDataFactory->expects(self::exactly(2))->method('get')->willReturn($appData);
 		$this->locationMapper->expects(self::once())->method('find')->with(1)->willReturn($location);
 		$this->locationMapper->expects(self::once())->method('delete')->with($location);
 		$this->cabinetMapper->expects(self::once())->method('findByLocation')->with(1)->willReturn([$cabinet]);
@@ -451,6 +644,46 @@ final class LagerServiceTest extends TestCase {
 		}
 	}
 
+	public function testLocationImageIsStoredReadAndDeletedInAppData(): void {
+		$imagePath = tempnam(sys_get_temp_dir(), 'lager-location-test-');
+		self::assertNotFalse($imagePath);
+		$image = imagecreatetruecolor(2, 2);
+		imagejpeg($image, $imagePath);
+		imagedestroy($image);
+
+		$location = new Location();
+		$location->setId(17);
+		$this->locationMapper->expects(self::exactly(2))->method('find')->with(17)->willReturn($location);
+		$file = $this->createMock(ISimpleFile::class);
+		$folder = $this->createMock(ISimpleFolder::class);
+		$folder->expects(self::exactly(4))
+			->method('fileExists')
+			->with('location_17.jpg')
+			->willReturnOnConsecutiveCalls(false, true, true, true);
+		$folder->expects(self::once())
+			->method('newFile')
+			->with('location_17.jpg', self::callback(static fn (string $contents): bool => str_starts_with($contents, "\xFF\xD8")))
+			->willReturn($file);
+		$folder->expects(self::exactly(2))->method('getFile')->with('location_17.jpg')->willReturn($file);
+		$file->expects(self::once())->method('getContent')->willReturn('location-jpeg');
+		$file->expects(self::once())->method('delete');
+		$appData = $this->createMock(IAppData::class);
+		$appData->expects(self::exactly(4))->method('getFolder')->with('/')->willReturn($folder);
+		$this->appDataFactory->expects(self::exactly(4))->method('get')->willReturn($appData);
+
+		try {
+			$saved = $this->service->saveLocationImage(17, $imagePath);
+
+			self::assertTrue($saved['ok']);
+			self::assertGreaterThan(0, $saved['size']);
+			self::assertSame('location-jpeg', $this->service->getLocationImage(17));
+			self::assertTrue($this->service->hasLocationImage(17));
+			$this->service->deleteLocationImage(17);
+		} finally {
+			unlink($imagePath);
+		}
+	}
+
 	public function testCreateStockAllowsManualEntryWithoutEanOrImage(): void {
 		$slot = new Slot();
 		$slot->setId(3);
@@ -473,11 +706,100 @@ final class LagerServiceTest extends TestCase {
 			}))
 			->willReturnCallback(static fn (StockItem $stock): StockItem => $stock);
 
-		$result = $this->service->createStock(3, ' Olive oil ', ' Extra virgin ', 0);
+		$result = $this->service->createStock(3, ' Olive oil ', ' Extra virgin ', 0, null, ' Local farm ');
 
 		self::assertSame(12, $result['id']);
 		self::assertNull($result['ean']);
 		self::assertSame(0, $result['quantity']);
+		self::assertSame('Local farm', $result['manufacturer']);
+		self::assertSame('Extra virgin', $result['notes']);
+		self::assertSame([], $result['tags']);
+	}
+
+	public function testCreateStockAssociatesUserDefinedTagsAndReturnsThem(): void {
+		$slot = new Slot();
+		$slot->setId(3);
+		$tag = new Tag();
+		$tag->setId(21);
+		$tag->setName('Vegan');
+		$this->slotMapper->method('find')->willReturn($slot);
+		$this->stockMapper->method('findBySlotAndArticle')->willReturn(null);
+		$this->stockMapper->method('insert')->willReturnCallback(static function (StockItem $stock): StockItem {
+			$stock->setId(12);
+			return $stock;
+		});
+		$this->tagMapper->expects(self::once())
+			->method('findOrCreateByNames')
+			->with(['Vegan'])
+			->willReturn([$tag]);
+		$this->tagMapper->expects(self::once())
+			->method('setForStockItem')
+			->with(12, [21]);
+		$this->tagMapper->expects(self::once())
+			->method('findByStockItem')
+			->with(12)
+			->willReturn([$tag]);
+		$this->db->expects(self::once())->method('beginTransaction');
+		$this->db->expects(self::once())->method('commit');
+		$this->db->expects(self::never())->method('rollBack');
+
+		$result = $this->service->createStock(3, 'Oat milk', null, 0, null, null, [' Vegan ', 'Vegan']);
+
+		self::assertSame([['id' => 21, 'name' => 'Vegan']], $result['tags']);
+	}
+
+	public function testSearchReturnsManufacturerNotesAndTagsWithMatchingArticle(): void {
+		$stock = $this->stockItem(8, 3, 'Oat milk', 2);
+		$stock->setManufacturer('Local farm');
+		$stock->setDescription('Unsweetened');
+		$tag = new Tag();
+		$tag->setId(21);
+		$tag->setName('Vegan');
+		$slot = new Slot();
+		$slot->setId(3);
+		$slot->setCabinetId(2);
+		$slot->setName('Shelf A');
+		$cabinet = new Cabinet();
+		$cabinet->setId(2);
+		$cabinet->setLocationId(1);
+		$cabinet->setName('Pantry');
+		$location = new Location();
+		$location->setId(1);
+		$location->setName('Kitchen');
+		$this->stockMapper->expects(self::once())->method('findByArticleLike')->with('Local farm')->willReturn([$stock]);
+		$this->tagMapper->expects(self::once())->method('findByStockItem')->with(8)->willReturn([$tag]);
+		$this->slotMapper->method('find')->with(3)->willReturn($slot);
+		$this->cabinetMapper->method('find')->with(2)->willReturn($cabinet);
+		$this->locationMapper->method('find')->with(1)->willReturn($location);
+
+		$result = $this->service->searchStock('Local farm');
+
+		self::assertSame('Local farm', $result[0]['manufacturer']);
+		self::assertSame('Unsweetened', $result[0]['notes']);
+		self::assertSame([['id' => 21, 'name' => 'Vegan']], $result[0]['tags']);
+	}
+
+	public function testTagManagementSupportsCreatingRenamingAndDeletingUserDefinedTags(): void {
+		$tag = new Tag();
+		$tag->setId(21);
+		$tag->setName('Vegan');
+		$this->tagMapper->expects(self::exactly(2))->method('findByName')->willReturn(null);
+		$this->tagMapper->expects(self::once())->method('insert')->willReturnCallback(static function (Tag $created): Tag {
+			$created->setId(21);
+			return $created;
+		});
+		$this->tagMapper->expects(self::exactly(2))->method('find')->with(21)->willReturn($tag);
+		$this->tagMapper->expects(self::once())->method('update')->willReturnArgument(0);
+
+		self::assertSame(['id' => 21, 'name' => 'Vegan'], $this->service->createTag(' Vegan '));
+		self::assertSame(['id' => 21, 'name' => 'Plant-based'], $this->service->updateTag(21, ' Plant-based '));
+
+		$this->tagMapper->expects(self::once())->method('delete')->with($tag);
+		$this->tagMapper->expects(self::once())->method('deleteForTag')->with(21);
+		$this->db->expects(self::once())->method('beginTransaction');
+		$this->db->expects(self::once())->method('commit');
+		$this->db->expects(self::never())->method('rollBack');
+		$this->service->deleteTag(21);
 	}
 
 	public function testCreateStockRejectsDuplicateArticleWhenNoInitialQuantityIsGiven(): void {
@@ -774,7 +1096,7 @@ final class LagerServiceTest extends TestCase {
 		}
 	}
 
-	private function stockItem(int $id, int $slotId, string $article, int $quantity): StockItem {
+	private function stockItem(int $id, ?int $slotId, string $article, int $quantity): StockItem {
 		$stock = new StockItem();
 		$stock->setId($id);
 		$stock->setSlotId($slotId);

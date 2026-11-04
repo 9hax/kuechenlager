@@ -2,19 +2,83 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Tests;
+namespace OCA\Kuechenlager\Tests;
 
-use OCA\Lager\Controller\ApiController;
+use OCA\Kuechenlager\Controller\ApiController;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataDisplayResponse;
-use OCA\Lager\Service\LagerService;
+use OCA\Kuechenlager\Service\LagerService;
+use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\JSONResponse;
 use OCP\IL10N;
 use OCP\IRequest;
 use PHPUnit\Framework\TestCase;
 
 final class ApiControllerTest extends TestCase {
+	public function testDeleteEndpointsAreAvailableToNonAdministrators(): void {
+		foreach (['deleteLocation', 'deleteCabinet', 'deleteSlot', 'deleteStock', 'uploadLocationImage', 'getLocationImage'] as $method) {
+			$attributes = (new \ReflectionMethod(ApiController::class, $method))
+				->getAttributes(NoAdminRequired::class);
+			self::assertCount(1, $attributes, $method . ' must be available to regular users.');
+		}
+	}
+
+	public function testLocationImageEndpointReturnsJpegOrNotFound(): void {
+		$service = $this->createMock(LagerService::class);
+		$calls = 0;
+		$service->expects(self::exactly(3))
+			->method('getLocationImage')
+			->with(17)
+			->willReturnCallback(static function () use (&$calls): ?string {
+				$calls++;
+				if ($calls === 1) {
+					return 'jpeg-data';
+				}
+				if ($calls === 2) {
+					return null;
+				}
+				throw new DoesNotExistException('missing');
+			});
+		$request = $this->createMock(IRequest::class);
+		$l10n = $this->createMock(IL10N::class);
+		$l10n->method('t')->willReturn('Not found.');
+		$controller = new ApiController('lager', $request, $service, $l10n);
+
+		$image = $controller->getLocationImage(17);
+		self::assertInstanceOf(DataDisplayResponse::class, $image);
+		self::assertSame(Http::STATUS_OK, $image->getStatus());
+
+		$missing = $controller->getLocationImage(17);
+		self::assertSame(Http::STATUS_NOT_FOUND, $missing->getStatus());
+		self::assertSame('Not found.', $missing->getData()['error']);
+
+		$missingLocation = $controller->getLocationImage(17);
+		self::assertSame(Http::STATUS_NOT_FOUND, $missingLocation->getStatus());
+		self::assertSame('Not found.', $missingLocation->getData()['error']);
+	}
+
+	public function testLocationImageUploadDelegatesUploadedTemporaryFile(): void {
+		$request = $this->createMock(IRequest::class);
+		$request->expects(self::once())->method('getUploadedFile')->with('file')->willReturn([
+			'error' => \UPLOAD_ERR_OK,
+			'tmp_name' => 'C:\\temp\\location.jpg',
+			'size' => 1024,
+		]);
+		$service = $this->createMock(LagerService::class);
+		$service->expects(self::once())
+			->method('saveLocationImage')
+			->with(17, 'C:\\temp\\location.jpg')
+			->willReturn(['ok' => true, 'size' => 512]);
+		$l10n = $this->createMock(IL10N::class);
+		$controller = new ApiController('lager', $request, $service, $l10n);
+
+		$response = $controller->uploadLocationImage(17);
+
+		self::assertSame(Http::STATUS_OK, $response->getStatus());
+		self::assertSame(['ok' => true, 'size' => 512], $response->getData());
+	}
+
 	public function testCreateLocationDelegatesRootLocationCreationAndReturnsJson(): void {
 		$service = $this->createMock(LagerService::class);
 		$service->expects(self::once())
@@ -88,10 +152,15 @@ final class ApiControllerTest extends TestCase {
 		$slot = ['id' => 3, 'name' => 'Shelf A'];
 		$history = [['id' => 8, 'type' => 'in']];
 		$article = ['id' => 12, 'article' => 'Green tea'];
+		$locationInventory = ['location' => ['id' => 1], 'items' => [$article]];
+		$cabinetInventory = ['cabinet' => ['id' => 2], 'items' => [$article]];
 		$service = $this->createMock(LagerService::class);
 		$service->expects(self::once())->method('getTree')->willReturn($tree);
 		$service->expects(self::once())->method('getSlot')->with(3)->willReturn($slot);
 		$service->expects(self::once())->method('getStockBySlot')->with(3)->willReturn([$article]);
+		$service->expects(self::once())->method('getStockByLocation')->with(1)->willReturn($locationInventory);
+		$service->expects(self::once())->method('getStockByCabinet')->with(2)->willReturn($cabinetInventory);
+		$service->expects(self::once())->method('getShoppingList')->willReturn([$article]);
 		$service->expects(self::once())->method('getHistory')->with(25, '3', 'tea')->willReturn($history);
 		$service->expects(self::once())->method('searchStock')->with('tea')->willReturn([$article]);
 		$service->expects(self::once())->method('searchByCode')->with('1234567890123')->willReturn($article);
@@ -102,6 +171,9 @@ final class ApiControllerTest extends TestCase {
 
 		self::assertSame($tree, $controller->tree()->getData());
 		self::assertSame(['slot' => $slot, 'items' => [$article]], $controller->stockBySlot(3)->getData());
+		self::assertSame($locationInventory, $controller->stockByLocation(1)->getData());
+		self::assertSame($cabinetInventory, $controller->stockByCabinet(2)->getData());
+		self::assertSame([$article], $controller->shoppingList()->getData());
 		self::assertSame($history, $controller->history(25, '3', 'tea')->getData());
 		self::assertSame([$article], $controller->search('tea')->getData());
 		self::assertSame($article, $controller->scanByCode('1234567890123')->getData());
@@ -137,11 +209,11 @@ final class ApiControllerTest extends TestCase {
 		$service = $this->createMock(LagerService::class);
 		$service->expects(self::once())
 			->method('createStock')
-			->with(3, 'Green tea', null, 2, '1234567890123')
+			->with(3, 'Green tea', null, 2, '1234567890123', null, [], 0)
 			->willReturn($created);
 		$service->expects(self::once())
 			->method('updateStock')
-			->with(12, 'Black tea', null, '9876543210123')
+			->with(12, 'Black tea', null, '9876543210123', null, null, null)
 			->willReturn($updated);
 		$service->expects(self::once())->method('deleteStock')->with(12);
 		$service->expects(self::once())
@@ -154,7 +226,9 @@ final class ApiControllerTest extends TestCase {
 			[],
 		);
 		$request->method('getHeader')->with('Content-Type')->willReturn('application/json');
-		$request->method('getParam')->with('ean')->willReturn('9876543210123');
+		$request->method('getParam')->willReturnCallback(
+			static fn (string $key): ?string => $key === 'ean' ? '9876543210123' : null,
+		);
 		$l10n = $this->createMock(IL10N::class);
 		$controller = new ApiController('lager', $request, $service, $l10n);
 
@@ -165,6 +239,91 @@ final class ApiControllerTest extends TestCase {
 			['id' => 18, 'quantity' => 2],
 			$controller->createMovement(12, 'in', 2, 'Restock')->getData(),
 		);
+	}
+
+	public function testCreateStockCanTargetCabinetWithoutASlot(): void {
+		$created = ['id' => 12, 'article' => 'Tea', 'cabinet_id' => 4, 'slot_id' => null];
+		$service = $this->createMock(LagerService::class);
+		$service->expects(self::once())
+			->method('createStockInCabinet')
+			->with(4, 'Tea', null, 2, null, null, [], 0)
+			->willReturn($created);
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParams')->willReturn([]);
+		$request->method('getParam')->willReturn(null);
+		$l10n = $this->createMock(IL10N::class);
+
+		$response = (new ApiController('kuechenlager', $request, $service, $l10n))
+			->createStock(null, 'Tea', null, 2, null, 4);
+
+		self::assertSame($created, $response->getData());
+	}
+
+	public function testStockEndpointsAcceptMinimumQuantity(): void {
+		$service = $this->createMock(LagerService::class);
+		$service->expects(self::once())
+			->method('createStock')
+			->with(3, 'Tea', null, 2, null, null, [], 4)
+			->willReturn(['id' => 12, 'minimum_quantity' => 4]);
+		$service->expects(self::once())
+			->method('updateStock')
+			->with(12, null, null, null, null, null, 5)
+			->willReturn(['id' => 12, 'minimum_quantity' => 5]);
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParam')->willReturn(null);
+		$controller = new ApiController('kuechenlager', $request, $service, $this->createMock(IL10N::class));
+
+		self::assertSame(
+			['id' => 12, 'minimum_quantity' => 4],
+			$controller->createStock(slot_id: 3, article: 'Tea', quantity: 2, minimum_quantity: 4)->getData(),
+		);
+		self::assertSame(
+			['id' => 12, 'minimum_quantity' => 5],
+			$controller->updateStock(12, minimum_quantity: 5)->getData(),
+		);
+	}
+
+	public function testTagEndpointsDelegateSharedTagManagement(): void {
+		$service = $this->createMock(LagerService::class);
+		$service->expects(self::once())->method('getTags')->willReturn([['id' => 7, 'name' => 'Vegan']]);
+		$service->expects(self::once())->method('createTag')->with('Vegan')->willReturn(['id' => 7, 'name' => 'Vegan']);
+		$service->expects(self::once())->method('updateTag')->with(7, 'Plant-based')->willReturn(['id' => 7, 'name' => 'Plant-based']);
+		$service->expects(self::once())->method('deleteTag')->with(7);
+		$request = $this->createMock(IRequest::class);
+		$l10n = $this->createMock(IL10N::class);
+		$controller = new ApiController('kuechenlager', $request, $service, $l10n);
+
+		self::assertSame([['id' => 7, 'name' => 'Vegan']], $controller->tags()->getData());
+		self::assertSame(['id' => 7, 'name' => 'Vegan'], $controller->createTag('Vegan')->getData());
+		self::assertSame(['id' => 7, 'name' => 'Plant-based'], $controller->updateTag(7, 'Plant-based')->getData());
+		self::assertSame(['ok' => true], $controller->deleteTag(7)->getData());
+	}
+
+	public function testStockEndpointsAcceptManufacturerNotesAndCommaSeparatedTags(): void {
+		$service = $this->createMock(LagerService::class);
+		$service->expects(self::once())
+			->method('createStock')
+			->with(3, 'Oat milk', 'Unsweetened', 2, null, 'Local farm', ['Vegan', 'Breakfast'], 0)
+			->willReturn(['id' => 12]);
+		$service->expects(self::once())
+			->method('updateStock')
+			->with(12, 'Oat milk', 'Barista blend', null, 'Local farm', ['Vegan'], null)
+			->willReturn(['id' => 12]);
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParam')->willReturnOnConsecutiveCalls(
+			'Local farm',
+			'Unsweetened',
+			'Vegan, Breakfast',
+			null,
+			'Local farm',
+			'Barista blend',
+			'Vegan',
+		);
+		$l10n = $this->createMock(IL10N::class);
+		$controller = new ApiController('kuechenlager', $request, $service, $l10n);
+
+		self::assertSame(['id' => 12], $controller->createStock(3, 'Oat milk', null, 2)->getData());
+		self::assertSame(['id' => 12], $controller->updateStock(12, 'Oat milk', null)->getData());
 	}
 
 	public function testImageUploadRejectsMissingAndOversizedFiles(): void {

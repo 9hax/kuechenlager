@@ -10,13 +10,13 @@
   },
   "autoload": {
     "psr-4": {
-      "OCA\\Lager\\": "lib/",
+      "OCA\\Kuechenlager\\": "lib/",
       "OCP\\": "vendor/nextcloud/ocp/OCP/"
     }
   },
   "autoload-dev": {
     "psr-4": {
-      "OCA\\Lager\\Tests\\": "tests/php/"
+      "OCA\\Kuechenlager\\Tests\\": "tests/php/"
     }
   },
   "scripts": {

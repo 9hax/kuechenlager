@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Db;
+namespace OCA\Kuechenlager\Db;
 
 use OCP\AppFramework\Db\QBMapper;
 use OCP\DB\QueryBuilder\IQueryBuilder;
@@ -13,7 +13,7 @@ use OCP\IDBConnection;
  */
 class LocationMapper extends BaseMapper {
 	public function __construct(IDBConnection $db) {
-		parent::__construct($db, 'lager_locations', Location::class);
+		parent::__construct($db, 'kuechenlager_locations', Location::class);
 	}
 
 	/**

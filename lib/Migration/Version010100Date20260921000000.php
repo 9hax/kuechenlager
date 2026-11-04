@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace OCA\Lager\Migration;
+namespace OCA\Kuechenlager\Migration;
 
 use Closure;
 use OCP\DB\ISchemaWrapper;
@@ -15,15 +15,15 @@ class Version010100Date20260921000000 extends SimpleMigrationStep {
 		/** @var ISchemaWrapper $schema */
 		$schema = $schemaClosure();
 
-		if ($schema->hasTable('lager_stock')) {
-			$table = $schema->getTable('lager_stock');
+		if ($schema->hasTable('kuechenlager_stock')) {
+			$table = $schema->getTable('kuechenlager_stock');
 			if (!$table->hasColumn('ean')) {
 				$table->addColumn('ean', Types::STRING, [
 					'notnull' => false,
 					'length' => 32,
 					'comment' => 'EAN/GTIN oder QR-Code-Wert',
 				]);
-				$table->addUniqueIndex(['ean'], 'lager_stock_ean');
+				$table->addUniqueIndex(['ean'], 'kuechenlager_stock_ean');
 			}
 		}
 
